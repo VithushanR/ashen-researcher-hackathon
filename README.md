@@ -1,2 +1,2 @@
 # ashen-researcher-hackathon
-An evidence-driven research agent that iteratively searches the Ashen Era Archive, checks sufficiency, and resolves source conflicts — built for SLIIT Codefest 2026, Sub-track 1C.
+Ashen Researcher is an AI research agent built for the SLIIT Codefest 2026 AI Competition (Sub-track 1C — Searching the Way a Human Does). Rather than answering from a single retrieval pass, it searches the Ashen Era Archive iteratively — reading what it finds, checking whether the evidence is sufficient, and searching again with what it's learned — until it can produce a fully cited answer or transparently state what remains unresolved. It also detects and reasons through conflicting sources across the archive's 415 mixed-format documents.

@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+streamlit
+chromadb
+rank_bm25
+voyageai
+pymupdf
+pdfplumber
+python-docx
+pytesseract
+tenacity
+diskcache
+python-dotenv
+pydantic
+pytest
+sentence-transformers

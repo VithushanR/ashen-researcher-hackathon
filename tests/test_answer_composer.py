@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.answer.composer import compose_answer
+from tests.answer_helpers import supported_semantics
 from src.answer.synthesis import SynthesisResult
 
 
@@ -44,7 +45,7 @@ def test_single_evidence_success_and_minimal_prompt():
     research = state(item)
     synthesize = Mock(return_value=response())
 
-    result = compose_answer(research, synthesize=synthesize)
+    result = compose_answer(research, validate_semantics=supported_semantics, synthesize=synthesize)
 
     assert result.model_dump() == {
         "question": research.question, "answer": "The test gate is blue.",
@@ -72,7 +73,7 @@ def test_multiple_chunks_resolve_by_id_not_evidence_order():
                   {"claim": "The test gate is blue.", "chunk_id": "test_a"},
               ]}
 
-    result = compose_answer(state(first, second), synthesize=Mock(return_value=output))
+    result = compose_answer(state(first, second), validate_semantics=supported_semantics, synthesize=Mock(return_value=output))
 
     assert result.citations == [
         {"claim": "The test wall is green.", "filename": "other.md", "page": None,
@@ -85,7 +86,7 @@ def test_multiple_chunks_resolve_by_id_not_evidence_order():
 @pytest.mark.parametrize("section", ["Test section", None])
 def test_section_and_filename_fallback_metadata(section):
     item = evidence(page=None, section=section)
-    result = compose_answer(state(item), synthesize=Mock(return_value=response()))
+    result = compose_answer(state(item), validate_semantics=supported_semantics, synthesize=Mock(return_value=response()))
     assert result.citations[0] == {
         "claim": "The test gate is blue.", "filename": item.filename,
         "page": None, "section": section, "source_type": item.source_type,
@@ -94,7 +95,7 @@ def test_section_and_filename_fallback_metadata(section):
 
 def test_unknown_chunk_is_rejected():
     with pytest.raises(ValueError, match="Unknown synthesis chunk_id: invented"):
-        compose_answer(state(evidence()), synthesize=Mock(return_value=response("invented")))
+        compose_answer(state(evidence()), validate_semantics=supported_semantics, synthesize=Mock(return_value=response("invented")))
 
 
 @pytest.mark.parametrize("field", ["filename", "page", "section", "source_type",
@@ -103,7 +104,7 @@ def test_generated_metadata_is_rejected(field):
     output = response()
     output["citation_claims"][0][field] = "invented"
     with pytest.raises(ValidationError):
-        compose_answer(state(evidence()), synthesize=Mock(return_value=output))
+        compose_answer(state(evidence()), validate_semantics=supported_semantics, synthesize=Mock(return_value=output))
 
 
 @pytest.mark.parametrize("output", [
@@ -113,12 +114,12 @@ def test_generated_metadata_is_rejected(field):
 ])
 def test_malformed_synthesis_is_rejected(output):
     with pytest.raises(ValidationError):
-        compose_answer(state(evidence()), synthesize=Mock(return_value=output))
+        compose_answer(state(evidence()), validate_semantics=supported_semantics, synthesize=Mock(return_value=output))
 
 
 def test_validated_synthesis_result_is_accepted():
     result = compose_answer(
-        state(evidence()), synthesize=Mock(return_value=SynthesisResult(**response()))
+        state(evidence()), validate_semantics=supported_semantics, synthesize=Mock(return_value=SynthesisResult(**response()))
     )
     assert result.answer == response()["answer"]
 
@@ -132,11 +133,11 @@ def test_validated_synthesis_result_is_accepted():
 def test_out_of_scope_or_ambiguous_state_rejected_before_synthesis(research):
     synthesize = Mock()
     with pytest.raises(ValueError):
-        compose_answer(research, synthesize=synthesize)
+        compose_answer(research, validate_semantics=supported_semantics, synthesize=synthesize)
     synthesize.assert_not_called()
 
 
 def test_synthesis_failure_propagates_without_complete_answer():
     with pytest.raises(RuntimeError, match="Synthetic provider failure"):
-        compose_answer(state(evidence()), synthesize=Mock(
+        compose_answer(state(evidence()), validate_semantics=supported_semantics, synthesize=Mock(
             side_effect=RuntimeError("Synthetic provider failure")))

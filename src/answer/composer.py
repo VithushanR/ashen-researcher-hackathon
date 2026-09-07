@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from .models import ComposedAnswer
 from .conflicts import compose_conflict_answer
+from .semantic_validation import validate_citation_claim
 from .synthesis import PartialSynthesisResult, SynthesisResult, build_synthesis_prompt
 
 if TYPE_CHECKING:
@@ -12,7 +13,8 @@ if TYPE_CHECKING:
 
 
 def compose_answer(
-    state: "ResearchState", *, synthesize: Callable[[str], object]
+    state: "ResearchState", *, synthesize: Callable[[str], object],
+    validate_semantics: Callable[[str], object] | None = None,
 ) -> ComposedAnswer:
     """Compose a finished research state, retaining any authoritative gaps.
 
@@ -23,6 +25,8 @@ def compose_answer(
     states use deterministic presentation of Person B's decisions instead of
     synthesis. Non-conflict partial states synthesize only supported facts and
     append Person B's unresolved claims unchanged, without citations for gaps.
+    Generated citation claims require an injected semantic validator. Missing
+    wiring, rejected claims, and malformed verdicts fail before returning an answer.
     """
     if not state.evidence:
         if state.unresolved_claims and not state.conflicts:
@@ -53,10 +57,18 @@ def compose_answer(
     if state.unresolved_claims and isinstance(raw_result, SynthesisResult):
         raw_result = raw_result.model_dump()
     synthesis = result_type.model_validate(raw_result)
-    citations = []
+    # Resolve every ID before any semantic calls; never fabricate source metadata.
     for reference in synthesis.citation_claims:
         if reference.chunk_id not in evidence_by_id:
             raise ValueError(f"Unknown synthesis chunk_id: {reference.chunk_id}")
+    if synthesis.citation_claims and validate_semantics is None:
+        raise ValueError("A semantic-validation adapter is required for generated citation claims")
+    citations = []
+    for reference in synthesis.citation_claims:
+        validate_citation_claim(
+            reference.claim, reference.chunk_id, evidence_by_id,
+            validate_semantics=validate_semantics,
+        )
         evidence = evidence_by_id[reference.chunk_id]
         citations.append({
             "claim": reference.claim,

@@ -117,17 +117,33 @@ def health_detail() -> dict:
     This is the first thing to check when the demo machine misbehaves: it
     answers "is the key loaded", "is the cache on", "which models are we
     actually calling", and "can the API see the archive" in one request.
+
+    It must therefore never fail. A diagnostic endpoint that 500s when part of
+    the system is missing is broken exactly when you need it, so a missing or
+    unimportable ``llm`` module is *reported* here rather than raised.
     """
-    from .llm import FAST_MODEL, STRONG_MODEL, llm_available
+    try:
+        from .llm import FAST_MODEL, STRONG_MODEL, llm_available
+
+        llm_state = {
+            "available": True,
+            "key_configured": llm_available(),
+            "fast_model": FAST_MODEL,
+            "strong_model": STRONG_MODEL,
+        }
+    except Exception as error:  # noqa: BLE001 - diagnostics must survive anything
+        llm_state = {
+            "available": False,
+            "key_configured": False,
+            "fast_model": None,
+            "strong_model": None,
+            "reason": str(error),
+        }
 
     return {
         "pipeline": pipeline_status(),
         "robustness": cache_status(),
-        "llm": {
-            "key_configured": llm_available(),
-            "fast_model": FAST_MODEL,
-            "strong_model": STRONG_MODEL,
-        },
+        "llm": llm_state,
         "archive_root": str(ARCHIVE_ROOT),
         "archive_present": ARCHIVE_ROOT.exists(),
     }

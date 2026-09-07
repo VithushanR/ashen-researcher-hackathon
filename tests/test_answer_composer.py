@@ -124,7 +124,7 @@ def test_validated_synthesis_result_is_accepted():
 
 
 @pytest.mark.parametrize("research", [
-    state(), state(evidence(), unresolved_claims=["Missing test fact"]),
+    state(),
     state(evidence(), conflicts=[SimpleNamespace(
         attribute=None, claims=[], resolution=None, resolved_value=None)]),
     state(evidence(), evidence()),

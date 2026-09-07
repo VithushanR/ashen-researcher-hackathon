@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from .models import ComposedAnswer
 from .conflicts import compose_conflict_answer
-from .synthesis import SynthesisResult, build_synthesis_prompt
+from .synthesis import PartialSynthesisResult, SynthesisResult, build_synthesis_prompt
 
 if TYPE_CHECKING:
     from ..agent.state import ResearchState
@@ -14,21 +14,24 @@ if TYPE_CHECKING:
 def compose_answer(
     state: "ResearchState", *, synthesize: Callable[[str], object]
 ) -> ComposedAnswer:
-    """Compose a finished, nonempty research state.
+    """Compose a finished research state, retaining any authoritative gaps.
 
     The caller supplies the team's synthesis adapter, accepting a prompt and
     returning decoded JSON or SynthesisResult. Provider wiring is deliberately
     required; no model or network client is selected here. The caller guarantees
     research has finished because the state has no completion flag. Conflict
     states use deterministic presentation of Person B's decisions instead of
-    synthesis. General partial answers without unresolved conflicts are not yet
-    supported.
+    synthesis. Non-conflict partial states synthesize only supported facts and
+    append Person B's unresolved claims unchanged, without citations for gaps.
     """
-    if state.unresolved_claims and not any(
-        conflict.resolved_value is None for conflict in state.conflicts
-    ):
-        raise ValueError("General unresolved research gaps are not yet supported")
     if not state.evidence:
+        if state.unresolved_claims and not state.conflicts:
+            return ComposedAnswer(
+                question=state.question,
+                answer="No supporting evidence was retrieved.\n\n" + _format_gaps(state.unresolved_claims),
+                status="partial_gap_stated", confidence=state.confidence,
+                citations=[], conflicts=[], iterations_used=state.iteration,
+            )
         raise ValueError("Answer composition requires evidence")
 
     evidence_by_id = {}
@@ -43,8 +46,13 @@ def compose_answer(
     prompt = build_synthesis_prompt(
         state.question,
         [{"chunk_id": item.chunk_id, "text": item.text} for item in state.evidence],
+        unresolved_claims=state.unresolved_claims,
     )
-    synthesis = SynthesisResult.model_validate(synthesize(prompt))
+    result_type = PartialSynthesisResult if state.unresolved_claims else SynthesisResult
+    raw_result = synthesize(prompt)
+    if state.unresolved_claims and isinstance(raw_result, SynthesisResult):
+        raw_result = raw_result.model_dump()
+    synthesis = result_type.model_validate(raw_result)
     citations = []
     for reference in synthesis.citation_claims:
         if reference.chunk_id not in evidence_by_id:
@@ -60,10 +68,18 @@ def compose_answer(
 
     return ComposedAnswer(
         question=state.question,
-        answer=synthesis.answer,
-        status="complete",
+        answer=(synthesis.answer + "\n\n" + _format_gaps(state.unresolved_claims)
+                if state.unresolved_claims else synthesis.answer),
+        status="partial_gap_stated" if state.unresolved_claims else "complete",
         confidence=state.confidence,
         citations=citations,
         conflicts=[],
         iterations_used=state.iteration,
+    )
+
+
+def _format_gaps(unresolved_claims: list[str]) -> str:
+    """Keep B's gap descriptions even if synthesis omits or paraphrases them."""
+    return "Unresolved information (not established by research):\n" + "\n".join(
+        f"- {gap}" for gap in unresolved_claims
     )

@@ -68,13 +68,14 @@ def compose_conflict_answer(
                 lines.append(f"Supplied resolution: {conflict.resolution}")
         paragraphs.append("\n".join(lines))
 
-    if unresolved and state.unresolved_claims:
+    if state.unresolved_claims:
         paragraphs.append("Remaining research gaps:\n" + "\n".join(state.unresolved_claims))
 
     return ComposedAnswer(
         question=state.question,
         answer="\n\n".join(paragraphs),
-        status="partial_gap_stated" if unresolved else "complete_with_conflict",
+        status=("partial_gap_stated" if unresolved or state.unresolved_claims
+                else "complete_with_conflict"),
         confidence=state.confidence,
         citations=citations,
         conflicts=conflicts,

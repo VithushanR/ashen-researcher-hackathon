@@ -1,9 +1,10 @@
-"""Clean-success composition using Person B's evidence and an injected LLM call."""
+"""Compose clean answers or faithfully present Person B's conflict decisions."""
 
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from .models import ComposedAnswer
+from .conflicts import compose_conflict_answer
 from .synthesis import SynthesisResult, build_synthesis_prompt
 
 if TYPE_CHECKING:
@@ -13,23 +14,31 @@ if TYPE_CHECKING:
 def compose_answer(
     state: "ResearchState", *, synthesize: Callable[[str], object]
 ) -> ComposedAnswer:
-    """Compose a successfully finished, nonempty state without conflicts or gaps.
+    """Compose a finished, nonempty research state.
 
     The caller supplies the team's synthesis adapter, accepting a prompt and
     returning decoded JSON or SynthesisResult. Provider wiring is deliberately
     required; no model or network client is selected here. The caller guarantees
-    research has finished successfully because the state has no completion flag.
+    research has finished because the state has no completion flag. Conflict
+    states use deterministic presentation of Person B's decisions instead of
+    synthesis. General partial answers without unresolved conflicts are not yet
+    supported.
     """
-    if state.conflicts or state.unresolved_claims:
-        raise ValueError("Only clean-success states without conflicts or gaps are supported")
+    if state.unresolved_claims and not any(
+        conflict.resolved_value is None for conflict in state.conflicts
+    ):
+        raise ValueError("General unresolved research gaps are not yet supported")
     if not state.evidence:
-        raise ValueError("Clean-success composition requires evidence")
+        raise ValueError("Answer composition requires evidence")
 
     evidence_by_id = {}
     for evidence in state.evidence:
         if evidence.chunk_id in evidence_by_id:
             raise ValueError(f"Ambiguous duplicate evidence chunk_id: {evidence.chunk_id}")
         evidence_by_id[evidence.chunk_id] = evidence
+
+    if state.conflicts:
+        return compose_conflict_answer(state, evidence_by_id)
 
     prompt = build_synthesis_prompt(
         state.question,

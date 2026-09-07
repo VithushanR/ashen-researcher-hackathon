@@ -45,7 +45,8 @@ class CitationSupportError(ValueError):
 
 
 def build_validation_prompt(
-    claim: str, chunk_id: str, evidence_by_id: dict[str, "Evidence"]
+    claim: str, chunk_id: str, evidence_by_id: dict[str, "Evidence"],
+    *, conflict_attribution: bool = False,
 ) -> str:
     """Supply the actual cited text plus all evidence for scoped absence checks."""
     cited = evidence_by_id[chunk_id]
@@ -90,6 +91,27 @@ invent a quote or ID. Do not return an answer or revised claim.
 
 INPUT DATA:
 """
+    if conflict_attribution:
+        instructions = instructions.replace(
+            "or a genuine direct\nevidence disagreement needing Person B's conflict process",
+            "about local support",
+        )
+        instructions = instructions.replace("INPUT DATA:\n", """Conflict attribution context:
+This raw claim is one competing assertion already identified by Person B.
+Check only whether its referenced passage supports that assertion, not which
+claim is globally correct. A different competing source disagreeing does not
+by itself invalidate faithful reporting of this passage's direct assertion.
+Do not rank sources, choose a winner, or change B's resolution or resolved_value.
+Keep all local contradiction, scope, uncertainty, and strengthening checks.
+Explicit absence still prohibits reconstructing an attribute from adjacent
+behavior or activity and strengthening 'not canonical' into 'does not exist'.
+However, a directly stated competing assertion is not an inferred attribute
+merely because another passage disagrees or states an absence. Faithful absence
+statements and directly supported event claims may pass. The source prefix used
+in presentation is not part of the raw claim being checked.
+
+INPUT DATA:
+""")
     return instructions + json.dumps({
         "claim": claim,
         "referenced_evidence": {"chunk_id": chunk_id, "text": cited.text},
@@ -104,11 +126,14 @@ INPUT DATA:
 def validate_citation_claim(
     claim: str, chunk_id: str, evidence_by_id: dict[str, "Evidence"],
     *, validate_semantics: Callable[[str], object],
+    conflict_attribution: bool = False,
 ) -> SemanticVerdict:
     """Accept only supported/clear; malformed, uncertain, or failed checks abort."""
     if chunk_id not in evidence_by_id:
         raise ValueError(f"Unknown synthesis chunk_id: {chunk_id}")
-    raw = validate_semantics(build_validation_prompt(claim, chunk_id, evidence_by_id))
+    raw = validate_semantics(build_validation_prompt(
+        claim, chunk_id, evidence_by_id, conflict_attribution=conflict_attribution,
+    ))
     # Revalidate even model instances, including instances constructed unchecked.
     if isinstance(raw, SemanticVerdict):
         raw = raw.model_dump()

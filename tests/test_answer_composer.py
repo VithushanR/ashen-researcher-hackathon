@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from src.answer.composer import compose_answer
 from tests.answer_helpers import complete_coverage
 from tests.answer_helpers import supported_semantics
-from src.answer.synthesis import SynthesisResult
+from src.answer.synthesis import CitationClaim, PartialSynthesisResult, SynthesisResult
 
 
 def evidence(chunk_id="test_a", **overrides):
@@ -124,6 +124,93 @@ def test_validated_synthesis_result_is_accepted():
         state(evidence()), validate_semantics=supported_semantics, validate_coverage=complete_coverage, synthesize=Mock(return_value=SynthesisResult(**response()))
     )
     assert result.answer == response()["answer"]
+
+
+def assert_synthesis_rejected(output, *, partial=False):
+    coverage = Mock()
+    semantics = Mock()
+    research = state(evidence(), unresolved_claims=["Unknown date."] if partial else [])
+    with pytest.raises(ValidationError):
+        compose_answer(research, synthesize=Mock(return_value=output),
+                       validate_coverage=coverage, validate_semantics=semantics)
+    coverage.assert_not_called()
+    semantics.assert_not_called()
+
+
+@pytest.mark.parametrize("as_instance", [False, True], ids=["dictionary", "instance"])
+@pytest.mark.parametrize("empty_answer,empty_claims", [(True, True), (True, False), (False, True)])
+def test_clean_constraints_apply_to_dicts_and_unchecked_instances(as_instance, empty_answer, empty_claims):
+    output = response()
+    if empty_answer:
+        output["answer"] = ""
+    if empty_claims:
+        output["citation_claims"] = []
+    if as_instance:
+        output["citation_claims"] = [CitationClaim(**claim) for claim in output["citation_claims"]]
+        output = SynthesisResult.model_construct(**output)
+    assert_synthesis_rejected(output)
+
+
+def test_mutated_synthesis_instance_is_revalidated():
+    output = SynthesisResult(**response())
+    output.answer = ""
+    output.citation_claims.clear()
+    assert_synthesis_rejected(output)
+
+
+def test_partial_subclass_cannot_relax_clean_constraints():
+    assert_synthesis_rejected(PartialSynthesisResult(answer="No supported facts.", citation_claims=[]))
+
+
+def test_clean_compatible_subclass_is_accepted():
+    output = PartialSynthesisResult(**response())
+    result = compose_answer(state(evidence()), synthesize=Mock(return_value=output),
+                            validate_coverage=complete_coverage, validate_semantics=supported_semantics)
+    assert result.answer == output.answer
+    assert result.status == "complete"
+    assert result.citations[0]["claim"] == output.citation_claims[0].claim
+
+
+@pytest.mark.parametrize("partial", [False, True])
+@pytest.mark.parametrize("field", ["claim", "chunk_id"])
+@pytest.mark.parametrize("mutated", [False, True], ids=["unchecked", "mutated"])
+def test_invalid_nested_claim_instance_is_revalidated(partial, field, mutated):
+    fields = response()["citation_claims"][0]
+    if mutated:
+        claim = CitationClaim(**fields)
+        setattr(claim, field, "")
+    else:
+        fields[field] = ""
+        claim = CitationClaim.model_construct(**fields)
+    output = response()
+    output["citation_claims"] = [claim]
+    assert_synthesis_rejected(output, partial=partial)
+
+
+@pytest.mark.parametrize("as_instance", [False, True], ids=["dictionary", "instance"])
+def test_partial_nonempty_answer_with_zero_claims_remains_valid(as_instance):
+    output = {"answer": "No supported facts.", "citation_claims": []}
+    if as_instance:
+        output = PartialSynthesisResult(**output)
+    semantics = Mock()
+    result = compose_answer(
+        state(evidence(), unresolved_claims=["Unknown date."]),
+        synthesize=Mock(return_value=output), validate_coverage=complete_coverage,
+        validate_semantics=semantics,
+    )
+    assert result.status == "partial_gap_stated"
+    assert result.answer.startswith("No supported facts.")
+    assert "Unknown date." in result.answer
+    assert result.citations == []
+    semantics.assert_not_called()
+
+
+@pytest.mark.parametrize("as_instance", [False, True], ids=["dictionary", "instance"])
+def test_partial_empty_answer_is_rejected(as_instance):
+    output = {"answer": "", "citation_claims": []}
+    if as_instance:
+        output = PartialSynthesisResult.model_construct(**output)
+    assert_synthesis_rejected(output, partial=True)
 
 
 @pytest.mark.parametrize("research", [

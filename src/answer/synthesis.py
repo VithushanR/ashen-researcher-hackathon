@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class CitationClaim(BaseModel):
     """A generated factual assertion and its supporting evidence identifier."""
 
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid", strict=True, revalidate_instances="always")
 
     claim: str = Field(min_length=1)
     chunk_id: str = Field(min_length=1)

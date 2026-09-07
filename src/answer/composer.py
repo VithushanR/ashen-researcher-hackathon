@@ -54,7 +54,8 @@ def compose_answer(
         evidence_by_id[evidence.chunk_id] = evidence
 
     if state.conflicts:
-        return compose_conflict_answer(state, evidence_by_id, validate_coverage=validate_coverage)
+        return compose_conflict_answer(state, evidence_by_id, validate_coverage=validate_coverage,
+                                       validate_semantics=validate_semantics)
 
     prompt = build_synthesis_prompt(
         state.question,
@@ -63,7 +64,8 @@ def compose_answer(
     )
     result_type = PartialSynthesisResult if state.unresolved_claims else SynthesisResult
     raw_result = synthesize(prompt)
-    if state.unresolved_claims and isinstance(raw_result, SynthesisResult):
+    # Revalidate instances and subclasses against the schema selected by the state.
+    if isinstance(raw_result, SynthesisResult):
         raw_result = raw_result.model_dump()
     synthesis = result_type.model_validate(raw_result)
     answer = (synthesis.answer + "\n\n" + _format_gaps(state.unresolved_claims)

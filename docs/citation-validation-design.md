@@ -66,9 +66,15 @@ evidence-index sanity checks
 -> ComposedAnswer
 ```
 
-Deterministic conflict answers retain their existing lookup/construction flow,
-then run coverage on the assembled text before returning ComposedAnswer. They
-do not undergo generated-claim synthesis or semantic re-resolution. Gap-only
+Deterministic conflict answers resolve all supplied chunk IDs, assemble the
+answer, and run coverage first. Each citable raw competing claim then uses the
+same semantic validator before trusted citation construction and ComposedAnswer.
+Conflict-specific context checks local passage support, not the globally correct
+claim: disagreement alone does not invalidate a directly supported attribution.
+Scope, uncertainty, strengthening, and explicit-absence inference checks remain
+required. B's claims, resolution, and resolved_value are never changed. Missing
+chunk references retain their notice without a citation or semantic call.
+Conflict answers do not undergo synthesis or semantic re-resolution. Gap-only
 answers run coverage before return and have no factual evidence citations to
 send through semantic validation.
 
@@ -100,7 +106,8 @@ verdict. Malformed output, fabricated findings, adapter failures, or missing
 adapter wiring also fail before returning an answer. The composer does not
 silently drop, rewrite, or repair a rejected claim and adds no public statuses.
 
-This applies to generated claim/chunk-ID pairs in clean and partial synthesis.
+This applies to generated claim/chunk-ID pairs in clean and partial synthesis
+and to every conflict claim with a supplied chunk reference.
 Deterministic conflict presentation remains B-owned in substance and is not
 sent for re-resolution. Gap-only answers without generated factual claims do
 not require a semantic call. B's gap statements receive no fabricated citations.

@@ -6,6 +6,7 @@ from collections.abc import Callable
 from .models import ComposedAnswer
 from .coverage_validation import validate_answer_coverage
 from .synthesis import CitationClaim
+from .semantic_validation import validate_citation_claim
 
 if TYPE_CHECKING:
     from ..agent.state import Evidence, ResearchState
@@ -14,6 +15,7 @@ if TYPE_CHECKING:
 def compose_conflict_answer(
     state: "ResearchState", evidence_by_id: dict[str, "Evidence"],
     *, validate_coverage: Callable[[str], object] | None = None,
+    validate_semantics: Callable[[str], object] | None = None,
 ) -> ComposedAnswer:
     """Preserve all claims and report only resolutions supplied by Person B.
 
@@ -26,6 +28,7 @@ def compose_conflict_answer(
     conflicts = []
     citations = []
     citation_claims = []
+    citable_claims = []
     unresolved = False
 
     for conflict in state.conflicts:
@@ -53,15 +56,8 @@ def compose_conflict_answer(
                 continue
             if claim.chunk_id not in evidence_by_id:
                 raise ValueError(f"Unknown conflict chunk_id: {claim.chunk_id}")
-            evidence = evidence_by_id[claim.chunk_id]
             citation_claims.append(CitationClaim(claim=attributed_claim, chunk_id=claim.chunk_id))
-            citations.append({
-                "claim": attributed_claim,
-                "filename": evidence.filename,
-                "page": evidence.page,
-                "section": evidence.section,
-                "source_type": evidence.source_type,
-            })
+            citable_claims.append((claim, attributed_claim))
 
         if conflict.resolved_value is None:
             unresolved = True
@@ -83,6 +79,21 @@ def compose_conflict_answer(
         answer, citation_claims, validate_coverage=validate_coverage,
         unresolved_claims=state.unresolved_claims, conflicts=conflicts,
     )
+    if citable_claims and validate_semantics is None:
+        raise ValueError("A semantic-validation adapter is required for conflict citations")
+    for claim, attributed_claim in citable_claims:
+        validate_citation_claim(
+            claim.claim, claim.chunk_id, evidence_by_id,
+            validate_semantics=validate_semantics, conflict_attribution=True,
+        )
+        evidence = evidence_by_id[claim.chunk_id]
+        citations.append({
+            "claim": attributed_claim,
+            "filename": evidence.filename,
+            "page": evidence.page,
+            "section": evidence.section,
+            "source_type": evidence.source_type,
+        })
     return ComposedAnswer(
         question=state.question,
         answer=answer,

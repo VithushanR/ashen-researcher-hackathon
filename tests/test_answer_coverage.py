@@ -217,7 +217,7 @@ def test_conflict_report_coverage_preserves_upstream_decisions(resolved_value):
     supplied = conflict(resolved_value=resolved_value)
     coverage = Mock(return_value={"coverage": "complete"})
     synthesize = Mock()
-    semantics = Mock()
+    semantics = Mock(side_effect=supported_semantics)
     result = compose_answer(research(supplied), synthesize=synthesize,
                             validate_coverage=coverage, validate_semantics=semantics)
     payload = data(coverage.call_args.args[0])
@@ -227,7 +227,7 @@ def test_conflict_report_coverage_preserves_upstream_decisions(resolved_value):
     assert len(payload["citation_claims"]) == 2
     assert result.status == ("partial_gap_stated" if resolved_value is None else "complete_with_conflict")
     synthesize.assert_not_called()
-    semantics.assert_not_called()
+    assert semantics.call_count == 2
 
 
 def test_conflict_report_cannot_bypass_missing_or_failing_coverage():

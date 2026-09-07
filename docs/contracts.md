@@ -82,5 +82,27 @@ This structured result gives Person D's API and UI the answer text, status,
 confidence, structured citations, conflict details, and iterations used.
 The citations support clickable source references; the conflicts support
 conflict callouts and preserve the multi-claim structure above as dictionaries.
-The exact citation dictionary fields and rules for selecting a status are not
-defined by this update.
+Rules for selecting a status are not defined by this update.
+
+### Citation dictionaries
+
+The public contract remains `citations: list[dict]`. Each dictionary has:
+
+| Field | Type | Required? |
+| --- | --- | --- |
+| `claim` | `str` | Yes |
+| `filename` | `str` | Yes |
+| `page` | `int \| None` | Yes, including when its value is `None` |
+| `section` | `str \| None` | No; may be absent or `None` |
+| `source_type` | `str` | Yes |
+
+Citation location follows this priority:
+
+1. If `page` is not `None`, use filename + page.
+2. If `page` is `None` and a section is available, use filename + section.
+3. If neither is available, fall back to filename.
+
+Structural validation preserves supplied values and extra keys unchanged. It
+does not normalize text, add an absent section, or check whether a source
+supports a claim. Page values are integers or `None`, not booleans, numeric
+strings, or floats. Citation rendering is separate from structural validation.

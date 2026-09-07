@@ -279,11 +279,25 @@ def _baseline_answer(question: str) -> dict[str, Any]:
     to make a point in the demo video; it should never be the thing that breaks
     a live run.
     """
+    # The baseline runs one retrieval and answers. It performs no sufficiency
+    # check at all, so its single round is always labelled baseline_no_check --
+    # never "insufficient", which would imply a judgement it never made. Shared
+    # between the real and degraded paths so both tell the same truth.
+    trace = [
+        {
+            "step": 1,
+            "query": question,
+            "found": "Single top-k retrieval, no loop.",
+            "verdict": "baseline_no_check",
+            "missing": None,
+        }
+    ]
+
     baseline_rag = _load("ASHEN_BASELINE_TARGET", DEFAULT_BASELINE_TARGET)
     if baseline_rag is None:
         stub = normalise_response(_stub_answer(question))
         stub["answer"] = "[Baseline RAG not wired yet - showing stub output.]\n\n" + stub["answer"]
-        stub["trace"] = stub["trace"][:1]
+        stub["trace"] = trace
         stub["iterations_used"] = 1
         return stub
 
@@ -293,15 +307,7 @@ def _baseline_answer(question: str) -> dict[str, Any]:
     payload.setdefault("status", "complete")
     payload.setdefault("confidence", 0)
     payload["iterations_used"] = 1
-    payload["trace"] = [
-        {
-            "step": 1,
-            "query": question,
-            "found": "Single top-k retrieval, no loop.",
-            "verdict": "baseline_no_check",
-            "missing": None,
-        }
-    ]
+    payload["trace"] = trace
     payload["is_stub"] = False
     return normalise_response(payload)
 

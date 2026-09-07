@@ -13,10 +13,64 @@ retrieving no temperament information. An absence answer may be `complete` when
 Person B returns no gaps or conflicts. Person C does not change confidence,
 sufficiency, conflict decisions, or the existing status rules for this safeguard.
 
-The executable pipeline now checks synthesis structure, resolves every chunk ID,
-then calls an injected semantic-validation adapter for every generated atomic
-claim before constructing its citation. Only a passing semantic verdict permits
-the final answer to be returned. No provider, SDK, or model is selected here.
+The executable pipeline checks synthesis structure, validates coverage of the
+final assembled answer, resolves every chunk ID, then calls an injected
+semantic-validation adapter for every generated atomic claim before constructing
+its citation. Both coverage and semantic checks must pass before returning the
+answer. No provider, SDK, or model is selected here.
+
+### Runtime coverage gate
+
+`compose_answer(..., validate_coverage=adapter)` requires a coverage adapter for
+every accepted answer, including zero-claim partial answers, deterministic gap-only
+answers, and conflict presentations. The internal Pydantic result is:
+
+```text
+coverage: complete | incomplete | uncertain
+uncovered_claims: list[string] (optional, defaults to [])
+reason: string | null (optional)
+```
+
+Only `complete` with no uncovered claims passes. Incomplete or uncertain results
+raise `CitationCoverageError` carrying the original answer and verdict. Missing
+wiring, wrong types, unknown values, extra fields, or an internally inconsistent
+complete verdict fail safely. Adapter exceptions propagate. No answer text is
+silently rewritten, deleted, or repaired.
+
+The prompt compares the exact final answer against the structured claim/chunk-ID
+pairs. It requires every atomic factual idea, including extra clauses and
+inferences within a sentence, to be represented. Faithful paraphrases count;
+word overlap alone does not. Transitions and non-factual wording need no claim,
+but hedged factual assertions still do. Explicit archive absence is factual
+content and must have a declared absence claim.
+
+Partial-answer coverage sees the appended gaps as well as synthesis text. Trusted
+research context, passed by code rather than synthesis, permits faithful reports
+of B's unresolved claims without fabricated citations. It does not permit a
+positive answer to a gap. The deterministic empty-evidence report supplies that
+state fact explicitly. Conflict coverage receives the preserved Conflict objects
+and attributed claim references, allowing faithful reports of B's decisions and
+source attributions (including those without chunk IDs). It must not reinterpret
+or re-resolve them. No source ranking or new B-side fields are introduced.
+
+Validation order for synthesized answers:
+
+```text
+evidence-index sanity checks
+-> synthesis + structured parsing
+-> assemble final text, including B's gaps
+-> citation coverage
+-> resolve every generated chunk ID
+-> semantic support + explicit-absence compatibility (same adapter call)
+-> trusted citation construction
+-> ComposedAnswer
+```
+
+Deterministic conflict answers retain their existing lookup/construction flow,
+then run coverage on the assembled text before returning ComposedAnswer. They
+do not undergo generated-claim synthesis or semantic re-resolution. Gap-only
+answers run coverage before return and have no factual evidence citations to
+send through semantic validation.
 
 The adapter receives a prompt containing the atomic claim, the exact referenced
 passage, and the full evidence set (chunk IDs, text, document IDs, sections, and
@@ -57,11 +111,11 @@ validation. Tests inject verdicts and verify the payloads, strict parsing, and
 rejection behavior without network access. Existing composition regressions use
 an explicitly named test-only supported-verdict double.
 
-## Semantic checking rules and remaining coverage work
+## Semantic checking rules
 
-The following rules guide the adapter. Per-pair runtime gating and the
-explicit-absence prompt are implemented. Whole-answer coverage in step 1 remains
-future work; this is not a new Person B contract:
+The following rules guide the adapters. Whole-answer coverage, per-pair runtime
+gating, and the explicit-absence prompt are implemented; this is not a new
+Person B contract:
 
 1. Check every factual assertion in the final answer, including assertions that
    lack a corresponding citation claim. Resolve each supplied chunk ID before
@@ -119,8 +173,14 @@ cross-chunk explicit absence. They also exercise valid absence/event claims,
 malformed output, unknown IDs, and fabricated quotations. The tests establish
 orchestration behavior, not real-model semantic accuracy.
 
-Remaining coverage work: compare all factual assertions in `answer` with the
-generated citation claims, including answers with empty citation-claim lists.
-The current runtime gate checks every supplied pair; it does not yet detect an
-additional unsupported sentence omitted from `citation_claims`. The synthesis
-prompt prohibits such omissions, but a prompt is not a runtime coverage check.
+Coverage tests inject incomplete verdicts for an omitted sentence, an extra
+inference within a covered sentence, and factual text with no declared claims.
+They verify rejection before semantic checking, strict result parsing, required
+wiring, and continued failure on unknown IDs or unsupported declared claims.
+Existing regression tests use an explicit test-only complete-coverage adapter.
+
+Remaining integration dependencies: shared synthesis, coverage, and semantic
+adapters. Deterministic tests verify orchestration and fail-safe handling of
+their results; actual semantic/coverage judgment accuracy still needs testing
+with the team's selected models and real archive examples. There is no production
+fallback that assumes coverage or semantic support when an adapter is missing.

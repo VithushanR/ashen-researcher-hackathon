@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from .models import ComposedAnswer
 from .conflicts import compose_conflict_answer
+from .coverage_validation import validate_answer_coverage
 from .semantic_validation import validate_citation_claim
 from .synthesis import PartialSynthesisResult, SynthesisResult, build_synthesis_prompt
 
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 def compose_answer(
     state: "ResearchState", *, synthesize: Callable[[str], object],
     validate_semantics: Callable[[str], object] | None = None,
+    validate_coverage: Callable[[str], object] | None = None,
 ) -> ComposedAnswer:
     """Compose a finished research state, retaining any authoritative gaps.
 
@@ -27,12 +29,19 @@ def compose_answer(
     append Person B's unresolved claims unchanged, without citations for gaps.
     Generated citation claims require an injected semantic validator. Missing
     wiring, rejected claims, and malformed verdicts fail before returning an answer.
+    Every final answer also requires injected coverage validation, including
+    answers with no generated claims and deterministic conflict/gap reports.
     """
     if not state.evidence:
         if state.unresolved_claims and not state.conflicts:
+            answer = "No supporting evidence was retrieved.\n\n" + _format_gaps(state.unresolved_claims)
+            validate_answer_coverage(
+                answer, [], validate_coverage=validate_coverage,
+                unresolved_claims=state.unresolved_claims, no_evidence_returned=True,
+            )
             return ComposedAnswer(
                 question=state.question,
-                answer="No supporting evidence was retrieved.\n\n" + _format_gaps(state.unresolved_claims),
+                answer=answer,
                 status="partial_gap_stated", confidence=state.confidence,
                 citations=[], conflicts=[], iterations_used=state.iteration,
             )
@@ -45,7 +54,7 @@ def compose_answer(
         evidence_by_id[evidence.chunk_id] = evidence
 
     if state.conflicts:
-        return compose_conflict_answer(state, evidence_by_id)
+        return compose_conflict_answer(state, evidence_by_id, validate_coverage=validate_coverage)
 
     prompt = build_synthesis_prompt(
         state.question,
@@ -57,6 +66,12 @@ def compose_answer(
     if state.unresolved_claims and isinstance(raw_result, SynthesisResult):
         raw_result = raw_result.model_dump()
     synthesis = result_type.model_validate(raw_result)
+    answer = (synthesis.answer + "\n\n" + _format_gaps(state.unresolved_claims)
+              if state.unresolved_claims else synthesis.answer)
+    validate_answer_coverage(
+        answer, synthesis.citation_claims, validate_coverage=validate_coverage,
+        unresolved_claims=state.unresolved_claims,
+    )
     # Resolve every ID before any semantic calls; never fabricate source metadata.
     for reference in synthesis.citation_claims:
         if reference.chunk_id not in evidence_by_id:
@@ -80,8 +95,7 @@ def compose_answer(
 
     return ComposedAnswer(
         question=state.question,
-        answer=(synthesis.answer + "\n\n" + _format_gaps(state.unresolved_claims)
-                if state.unresolved_claims else synthesis.answer),
+        answer=answer,
         status="partial_gap_stated" if state.unresolved_claims else "complete",
         confidence=state.confidence,
         citations=citations,

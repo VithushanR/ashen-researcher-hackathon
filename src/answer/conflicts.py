@@ -1,25 +1,31 @@
 """Deterministic presentation of upstream conflicts; no source ranking."""
 
 from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 from .models import ComposedAnswer
+from .coverage_validation import validate_answer_coverage
+from .synthesis import CitationClaim
 
 if TYPE_CHECKING:
     from ..agent.state import Evidence, ResearchState
 
 
 def compose_conflict_answer(
-    state: "ResearchState", evidence_by_id: dict[str, "Evidence"]
+    state: "ResearchState", evidence_by_id: dict[str, "Evidence"],
+    *, validate_coverage: Callable[[str], object] | None = None,
 ) -> ComposedAnswer:
     """Preserve all claims and report only resolutions supplied by Person B.
 
     Missing claim chunk IDs retain source attribution without fabricating a
     citation. Supplied but unknown IDs fail, as in the clean synthesis path.
-    No LLM is called, so it cannot infer a winner from contradictory passages.
+    No synthesis call is made. Coverage checks the final presentation against
+    B's supplied decisions without selecting a winner from the passages.
     """
     paragraphs = []
     conflicts = []
     citations = []
+    citation_claims = []
     unresolved = False
 
     for conflict in state.conflicts:
@@ -48,6 +54,7 @@ def compose_conflict_answer(
             if claim.chunk_id not in evidence_by_id:
                 raise ValueError(f"Unknown conflict chunk_id: {claim.chunk_id}")
             evidence = evidence_by_id[claim.chunk_id]
+            citation_claims.append(CitationClaim(claim=attributed_claim, chunk_id=claim.chunk_id))
             citations.append({
                 "claim": attributed_claim,
                 "filename": evidence.filename,
@@ -71,9 +78,14 @@ def compose_conflict_answer(
     if state.unresolved_claims:
         paragraphs.append("Remaining research gaps:\n" + "\n".join(state.unresolved_claims))
 
+    answer = "\n\n".join(paragraphs)
+    validate_answer_coverage(
+        answer, citation_claims, validate_coverage=validate_coverage,
+        unresolved_claims=state.unresolved_claims, conflicts=conflicts,
+    )
     return ComposedAnswer(
         question=state.question,
-        answer="\n\n".join(paragraphs),
+        answer=answer,
         status=("partial_gap_stated" if unresolved or state.unresolved_claims
                 else "complete_with_conflict"),
         confidence=state.confidence,

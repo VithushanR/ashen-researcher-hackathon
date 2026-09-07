@@ -7,6 +7,7 @@ from unittest.mock import Mock
 import pytest
 
 from src.answer.composer import compose_answer
+from tests.answer_helpers import complete_coverage
 from tests.test_answer_composer import evidence, state
 
 
@@ -36,7 +37,7 @@ def test_resolved_conflict_uses_upstream_result_and_preserves_metadata():
     before = deepcopy(input_state)
     synthesize = Mock(side_effect=AssertionError("Must not ask an LLM to resolve conflicts"))
 
-    result = compose_answer(input_state, synthesize=synthesize)
+    result = compose_answer(input_state, validate_coverage=complete_coverage, synthesize=synthesize)
 
     assert result.status == "complete_with_conflict"
     assert "Source conflict concerning test gate color" in result.answer
@@ -65,7 +66,7 @@ def test_unresolved_conflict_does_not_treat_resolution_text_as_a_winner():
     supplied = conflict(resolved_value=None, resolution="Tentative preference: green")
     synthesize = Mock(return_value={"answer": "Green wins"})
 
-    result = compose_answer(research(supplied), synthesize=synthesize)
+    result = compose_answer(research(supplied), validate_coverage=complete_coverage, synthesize=synthesize)
 
     assert result.status == "partial_gap_stated"
     assert "evidence remains contradictory" in result.answer
@@ -81,7 +82,7 @@ def test_unresolved_conflict_does_not_treat_resolution_text_as_a_winner():
 @pytest.mark.parametrize("resolved_value", ["red", None])
 def test_three_competing_claims_are_all_preserved(resolved_value):
     supplied = conflict(resolved_value=resolved_value, count=3)
-    result = compose_answer(research(supplied), synthesize=Mock())
+    result = compose_answer(research(supplied), validate_coverage=complete_coverage, synthesize=Mock())
     assert len(result.conflicts[0]["claims"]) == 3
     assert len(result.citations) == 3
     for claim in supplied.claims:
@@ -92,7 +93,7 @@ def test_three_competing_claims_are_all_preserved(resolved_value):
 
 def test_mixed_conflicts_remain_partial_and_preserve_both_decisions():
     result = compose_answer(
-        research(conflict(), conflict(resolved_value=None)), synthesize=Mock()
+        research(conflict(), conflict(resolved_value=None)), validate_coverage=complete_coverage, synthesize=Mock()
     )
     assert result.status == "partial_gap_stated"
     assert "The research result prefers: green." in result.answer
@@ -101,7 +102,7 @@ def test_mixed_conflicts_remain_partial_and_preserve_both_decisions():
 
 
 def test_resolved_value_without_explanation_does_not_invent_reason():
-    result = compose_answer(research(conflict(resolution=None)), synthesize=Mock())
+    result = compose_answer(research(conflict(resolution=None)), validate_coverage=complete_coverage, synthesize=Mock())
     assert result.status == "complete_with_conflict"
     assert result.conflicts[0]["resolution"] is None
     assert "Supplied resolution:" not in result.answer
@@ -110,7 +111,7 @@ def test_resolved_value_without_explanation_does_not_invent_reason():
 def test_missing_chunk_id_keeps_claim_without_fabricating_citation():
     supplied = conflict()
     supplied.claims[1].chunk_id = None
-    result = compose_answer(research(supplied), synthesize=Mock())
+    result = compose_answer(research(supplied), validate_coverage=complete_coverage, synthesize=Mock())
     assert len(result.citations) == 1
     assert result.conflicts[0]["claims"][1]["chunk_id"] is None
     assert supplied.claims[1].claim in result.answer
@@ -121,13 +122,13 @@ def test_unknown_conflict_chunk_id_is_rejected():
     supplied = conflict()
     supplied.claims[0].chunk_id = "invented"
     with pytest.raises(ValueError, match="Unknown conflict chunk_id: invented"):
-        compose_answer(research(supplied), synthesize=Mock())
+        compose_answer(research(supplied), validate_coverage=complete_coverage, synthesize=Mock())
 
 
 def test_unresolved_conflict_preserves_reported_gaps():
     result = compose_answer(
         research(conflict(resolved_value=None), unresolved_claims=["Gate color is disputed."]),
-        synthesize=Mock(),
+        validate_coverage=complete_coverage, synthesize=Mock(),
     )
     assert result.status == "partial_gap_stated"
     assert "Gate color is disputed." in result.answer
@@ -137,5 +138,5 @@ def test_upstream_result_is_not_overridden_by_source_tier():
     input_state = research(conflict(resolved_value="green"))
     input_state.evidence[0].reliability = "T1_authoritative"
     input_state.evidence[1].reliability = "T4_unverified"
-    result = compose_answer(input_state, synthesize=Mock())
+    result = compose_answer(input_state, validate_coverage=complete_coverage, synthesize=Mock())
     assert "The research result prefers: green." in result.answer

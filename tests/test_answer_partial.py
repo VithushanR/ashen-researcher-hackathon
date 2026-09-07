@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.answer.composer import compose_answer
+from tests.answer_helpers import complete_coverage
 from tests.answer_helpers import supported_semantics
 from src.answer.synthesis import PartialSynthesisResult, SynthesisResult
 from tests.test_answer_composer import evidence, state
@@ -32,7 +33,7 @@ def supported_result():
 def test_partial_fact_and_gap_preserve_metadata_and_only_cite_supported_fact():
     input_state = partial_state()
     before = deepcopy(input_state)
-    result = compose_answer(input_state, validate_semantics=supported_semantics, synthesize=Mock(return_value=supported_result()))
+    result = compose_answer(input_state, validate_semantics=supported_semantics, validate_coverage=complete_coverage, synthesize=Mock(return_value=supported_result()))
 
     assert result.status == "partial_gap_stated"
     assert result.question == input_state.question
@@ -52,7 +53,7 @@ def test_partial_fact_and_gap_preserve_metadata_and_only_cite_supported_fact():
 def test_multiple_authoritative_gaps_are_kept_even_if_synthesis_omits_them():
     gaps = [GAP, "The creature's age is unknown."]
     result = compose_answer(partial_state(unresolved_claims=gaps),
-                            validate_semantics=supported_semantics, synthesize=Mock(return_value=supported_result()))
+                            validate_semantics=supported_semantics, validate_coverage=complete_coverage, synthesize=Mock(return_value=supported_result()))
     for gap in gaps:
         assert f"- {gap}" in result.answer
         assert all(citation["claim"] != gap for citation in result.citations)
@@ -60,7 +61,7 @@ def test_multiple_authoritative_gaps_are_kept_even_if_synthesis_omits_them():
 
 def test_partial_prompt_separates_gaps_and_forbids_strengthening_evidence():
     synthesize = Mock(return_value=supported_result())
-    result = compose_answer(partial_state(), validate_semantics=supported_semantics, synthesize=synthesize)
+    result = compose_answer(partial_state(), validate_semantics=supported_semantics, validate_coverage=complete_coverage, synthesize=synthesize)
     prompt = synthesize.call_args.args[0]
     payload = json.loads(prompt.split("INPUT DATA:\n", 1)[1])
 
@@ -77,7 +78,7 @@ def test_partial_prompt_separates_gaps_and_forbids_strengthening_evidence():
 
 def test_partial_status_is_not_inferred_from_high_confidence_or_low_iteration():
     result = compose_answer(partial_state(confidence=100, iteration=1),
-                            validate_semantics=supported_semantics, synthesize=Mock(return_value=supported_result()))
+                            validate_semantics=supported_semantics, validate_coverage=complete_coverage, synthesize=Mock(return_value=supported_result()))
     assert result.status == "partial_gap_stated"
     assert result.confidence == 100
     assert result.iterations_used == 1
@@ -85,7 +86,7 @@ def test_partial_status_is_not_inferred_from_high_confidence_or_low_iteration():
 
 def test_no_evidence_returns_gaps_without_synthesis_or_citations():
     synthesize = Mock()
-    result = compose_answer(state(unresolved_claims=[GAP]), validate_semantics=supported_semantics, synthesize=synthesize)
+    result = compose_answer(state(unresolved_claims=[GAP]), validate_semantics=supported_semantics, validate_coverage=complete_coverage, synthesize=synthesize)
     assert result.status == "partial_gap_stated"
     assert result.citations == []
     assert GAP in result.answer
@@ -96,7 +97,7 @@ def test_no_supported_fact_does_not_require_fabricated_citation():
     synthesize = Mock(return_value={
         "answer": "The retrieved material does not establish an answer.", "citation_claims": [],
     })
-    result = compose_answer(partial_state(), validate_semantics=supported_semantics, synthesize=synthesize)
+    result = compose_answer(partial_state(), validate_semantics=supported_semantics, validate_coverage=complete_coverage, synthesize=synthesize)
     assert result.citations == []
     assert GAP in result.answer
     assert result.status == "partial_gap_stated"
@@ -106,26 +107,26 @@ def test_unknown_chunk_in_partial_synthesis_is_rejected():
     output = supported_result()
     output["citation_claims"][0]["chunk_id"] = "invented"
     with pytest.raises(ValueError, match="Unknown synthesis chunk_id: invented"):
-        compose_answer(partial_state(), validate_semantics=supported_semantics, synthesize=Mock(return_value=output))
+        compose_answer(partial_state(), validate_semantics=supported_semantics, validate_coverage=complete_coverage, synthesize=Mock(return_value=output))
 
 
 def test_partial_synthesis_still_rejects_generated_citation_metadata():
     output = supported_result()
     output["citation_claims"][0]["filename"] = "invented.pdf"
     with pytest.raises(ValidationError):
-        compose_answer(partial_state(), validate_semantics=supported_semantics, synthesize=Mock(return_value=output))
+        compose_answer(partial_state(), validate_semantics=supported_semantics, validate_coverage=complete_coverage, synthesize=Mock(return_value=output))
 
 
 @pytest.mark.parametrize("model", [SynthesisResult, PartialSynthesisResult])
 def test_partial_accepts_validated_synthesis_boundary_result(model):
-    result = compose_answer(partial_state(), validate_semantics=supported_semantics, synthesize=Mock(return_value=model(**supported_result())))
+    result = compose_answer(partial_state(), validate_semantics=supported_semantics, validate_coverage=complete_coverage, synthesize=Mock(return_value=model(**supported_result())))
     assert result.status == "partial_gap_stated"
     assert result.citations[0]["claim"] == SIGHTING
 
 
 def test_resolved_conflict_with_remaining_gap_is_partial_without_changing_resolution():
     synthesize = Mock()
-    result = compose_answer(research(conflict(), unresolved_claims=[GAP]), validate_semantics=supported_semantics, synthesize=synthesize)
+    result = compose_answer(research(conflict(), unresolved_claims=[GAP]), validate_semantics=supported_semantics, validate_coverage=complete_coverage, synthesize=synthesize)
     assert result.status == "partial_gap_stated"
     assert result.conflicts[0]["resolved_value"] == "green"
     assert "The research result prefers: green." in result.answer

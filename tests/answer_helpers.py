@@ -8,3 +8,8 @@ def supported_semantics(prompt):
     real validator. This helper is never imported by production code.
     """
     return {"support": "supported", "explicit_absence": "clear"}
+
+
+def complete_coverage(prompt):
+    """Assume coverage only in existing tests focused on other behavior."""
+    return {"coverage": "complete"}

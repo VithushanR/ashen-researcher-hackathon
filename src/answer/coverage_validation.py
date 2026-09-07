@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .synthesis import CitationClaim
+from .synthesis import CitationClaim, OrdinarySectionResult
 
 
 class CoverageVerdict(BaseModel):
@@ -42,6 +42,7 @@ def validate_answer_coverage(
     *, validate_coverage: Callable[[str], object] | None,
     unresolved_claims: list[str], conflicts: list[dict] | None = None,
     no_evidence_returned: bool = False,
+    ordinary_section: OrdinarySectionResult | None = None,
 ) -> CoverageVerdict:
     """Require coverage for all factual ideas, including undeclared inferences.
 
@@ -93,7 +94,21 @@ reason is an optional string or null. Complete must have no uncovered claims.
 
 INPUT DATA:
 """
-    prompt = instructions + json.dumps({
+    if ordinary_section is not None:
+        instructions = instructions.replace("INPUT DATA:\n", """Ordinary-section separation check:
+Also inspect ordinary_section text AND claims against B's conflicts and gaps.
+Return incomplete if ordinary synthesis restates, paraphrases, resolves, chooses
+between, or strengthens any disputed assertion, even B's preferred result.
+The authoritative-context exception permits deterministic conflict reporting
+only; it must not excuse disputed assertions in ordinary_section.
+Independent facts about the same entity or from the same chunk are allowed.
+Ordinary synthesis must not repeat B's gap report; the composer appends it once.
+Return uncertain if separation cannot be established. This checks overlap and
+presentation, not which competing claim is true. Never select a conflict winner.
+
+INPUT DATA:
+""")
+    payload = {
         "answer": answer,
         "citation_claims": [claim.model_dump() for claim in citation_claims],
         "research_context": {
@@ -101,7 +116,10 @@ INPUT DATA:
             "conflicts": conflicts or [],
             "no_evidence_returned": no_evidence_returned,
         },
-    }, ensure_ascii=False)
+    }
+    if ordinary_section is not None:
+        payload["ordinary_section"] = ordinary_section.model_dump()
+    prompt = instructions + json.dumps(payload, ensure_ascii=False)
     raw = validate_coverage(prompt)
     if isinstance(raw, CoverageVerdict):
         raw = raw.model_dump()

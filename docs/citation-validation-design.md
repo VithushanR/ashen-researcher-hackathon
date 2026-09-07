@@ -66,17 +66,28 @@ evidence-index sanity checks
 -> ComposedAnswer
 ```
 
-Deterministic conflict answers resolve all supplied chunk IDs, assemble the
-answer, and run coverage first. Each citable raw competing claim then uses the
-same semantic validator before trusted citation construction and ComposedAnswer.
-Conflict-specific context checks local passage support, not the globally correct
-claim: disagreement alone does not invalidate a directly supported attribution.
-Scope, uncertainty, strengthening, and explicit-absence inference checks remain
-required. B's claims, resolution, and resolved_value are never changed. Missing
-chunk references retain their notice without a citation or semantic call.
-Conflict answers do not undergo synthesis or semantic re-resolution. Gap-only
-answers run coverage before return and have no factual evidence citations to
-send through semantic validation.
+Conflict states first build deterministic B conflict presentation and resolve all
+supplied conflict chunk IDs. Synthesis uses all evidence for an optional independent
+ordinary section; whole conflict chunks are not removed. OrdinarySectionResult
+permits only null answer with no claims, or nonempty text with cited claims.
+Instances/subclasses are revalidated without weakening clean/partial contracts.
+
+The composer combines ordinary text, deterministic conflicts, and one B gap section.
+One coverage call sees the exact final answer and a separate ordinary_section.
+It must reject ordinary restatement, paraphrase, resolution, or strengthening of
+disputed claims, and repeated gap reporting; ambiguous separation is uncertain.
+Independent facts from the same entity or chunk remain allowed. This is a
+presentation check, not winner selection or a general answer-completeness check.
+
+After coverage, all ordinary IDs are checked, ordinary claims use normal semantic
+validation, and raw competing claims use conflict-attribution validation. Only then
+are trusted citations constructed. Shared chunk IDs do not cause deduplication.
+Disagreement alone does not invalidate a directly supported conflict attribution;
+scope, uncertainty, strengthening, and absence inference checks remain required.
+B's claims, resolution, and resolved_value are unchanged. Any unresolved conflict
+or B gap yields partial_gap_stated; otherwise conflicts yield complete_with_conflict.
+Missing conflict references retain their notice without a citation or semantic call.
+Gap-only answers without evidence retain their existing coverage-only path.
 
 The adapter receives a prompt containing the atomic claim, the exact referenced
 passage, and the full evidence set (chunk IDs, text, document IDs, sections, and

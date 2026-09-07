@@ -125,11 +125,11 @@ def test_partial_accepts_validated_synthesis_boundary_result(model):
 
 
 def test_resolved_conflict_with_remaining_gap_is_partial_without_changing_resolution():
-    synthesize = Mock()
+    synthesize = Mock(return_value={"answer": None, "citation_claims": []})
     result = compose_answer(research(conflict(), unresolved_claims=[GAP]), validate_semantics=supported_semantics, validate_coverage=complete_coverage, synthesize=synthesize)
     assert result.status == "partial_gap_stated"
     assert result.conflicts[0]["resolved_value"] == "green"
     assert "The research result prefers: green." in result.answer
     assert GAP in result.answer
     assert all(citation["claim"] != GAP for citation in result.citations)
-    synthesize.assert_not_called()
+    synthesize.assert_called_once()

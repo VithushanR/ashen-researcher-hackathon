@@ -4,10 +4,10 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from .models import ComposedAnswer
-from .conflicts import compose_conflict_answer
+from .conflicts import build_conflict_presentation
 from .coverage_validation import validate_answer_coverage
 from .semantic_validation import validate_citation_claim
-from .synthesis import PartialSynthesisResult, SynthesisResult, build_synthesis_prompt
+from .synthesis import CitationClaim, OrdinarySectionResult, PartialSynthesisResult, SynthesisResult, build_synthesis_prompt
 
 if TYPE_CHECKING:
     from ..agent.state import ResearchState
@@ -24,8 +24,8 @@ def compose_answer(
     returning decoded JSON or SynthesisResult. Provider wiring is deliberately
     required; no model or network client is selected here. The caller guarantees
     research has finished because the state has no completion flag. Conflict
-    states use deterministic presentation of Person B's decisions instead of
-    synthesis. Non-conflict partial states synthesize only supported facts and
+    states synthesize independent facts alongside deterministic presentation of
+    Person B's decisions. Non-conflict partial states synthesize only supported facts and
     append Person B's unresolved claims unchanged, without citations for gaps.
     Generated citation claims require an injected semantic validator. Missing
     wiring, rejected claims, and malformed verdicts fail before returning an answer.
@@ -53,39 +53,56 @@ def compose_answer(
             raise ValueError(f"Ambiguous duplicate evidence chunk_id: {evidence.chunk_id}")
         evidence_by_id[evidence.chunk_id] = evidence
 
-    if state.conflicts:
-        return compose_conflict_answer(state, evidence_by_id, validate_coverage=validate_coverage,
-                                       validate_semantics=validate_semantics)
+    presentation = build_conflict_presentation(state, evidence_by_id) if state.conflicts else None
+    conflicts = presentation.conflicts if presentation else []
+    conflict_citations = presentation.citations if presentation else []
 
     prompt = build_synthesis_prompt(
         state.question,
         [{"chunk_id": item.chunk_id, "text": item.text} for item in state.evidence],
-        unresolved_claims=state.unresolved_claims,
+        unresolved_claims=state.unresolved_claims, conflicts=conflicts,
     )
     result_type = PartialSynthesisResult if state.unresolved_claims else SynthesisResult
+    if presentation:
+        result_type = OrdinarySectionResult
     raw_result = synthesize(prompt)
     # Revalidate instances and subclasses against the schema selected by the state.
-    if isinstance(raw_result, SynthesisResult):
+    if isinstance(raw_result, (SynthesisResult, OrdinarySectionResult)):
         raw_result = raw_result.model_dump()
     synthesis = result_type.model_validate(raw_result)
-    answer = (synthesis.answer + "\n\n" + _format_gaps(state.unresolved_claims)
-              if state.unresolved_claims else synthesis.answer)
+    sections = [synthesis.answer] if synthesis.answer is not None else []
+    if presentation:
+        sections.append(presentation.answer)
+    if state.unresolved_claims:
+        sections.append(_format_gaps(state.unresolved_claims))
+    answer = "\n\n".join(sections)
+    combined_claims = list(synthesis.citation_claims) + [
+        CitationClaim(claim=item.attributed_claim, chunk_id=item.chunk_id)
+        for item in conflict_citations
+    ]
     validate_answer_coverage(
-        answer, synthesis.citation_claims, validate_coverage=validate_coverage,
-        unresolved_claims=state.unresolved_claims,
+        answer, combined_claims, validate_coverage=validate_coverage,
+        unresolved_claims=state.unresolved_claims, conflicts=conflicts,
+        ordinary_section=synthesis if presentation else None,
     )
     # Resolve every ID before any semantic calls; never fabricate source metadata.
     for reference in synthesis.citation_claims:
         if reference.chunk_id not in evidence_by_id:
             raise ValueError(f"Unknown synthesis chunk_id: {reference.chunk_id}")
-    if synthesis.citation_claims and validate_semantics is None:
+    if combined_claims and validate_semantics is None:
         raise ValueError("A semantic-validation adapter is required for generated citation claims")
-    citations = []
     for reference in synthesis.citation_claims:
         validate_citation_claim(
             reference.claim, reference.chunk_id, evidence_by_id,
             validate_semantics=validate_semantics,
         )
+    for reference in conflict_citations:
+        validate_citation_claim(
+            reference.raw_claim, reference.chunk_id, evidence_by_id,
+            validate_semantics=validate_semantics, conflict_attribution=True,
+        )
+    citations = []
+    for reference in combined_claims:
         evidence = evidence_by_id[reference.chunk_id]
         citations.append({
             "claim": reference.claim,
@@ -94,14 +111,17 @@ def compose_answer(
             "section": evidence.section,
             "source_type": evidence.source_type,
         })
+    status = "complete_with_conflict" if presentation else "complete"
+    if state.unresolved_claims or (presentation and presentation.has_unresolved):
+        status = "partial_gap_stated"
 
     return ComposedAnswer(
         question=state.question,
         answer=answer,
-        status="partial_gap_stated" if state.unresolved_claims else "complete",
+        status=status,
         confidence=state.confidence,
         citations=citations,
-        conflicts=[],
+        conflicts=conflicts,
         iterations_used=state.iteration,
     )
 

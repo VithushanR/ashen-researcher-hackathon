@@ -1,33 +1,34 @@
 """Deterministic presentation of upstream conflicts; no source ranking."""
 
 from typing import TYPE_CHECKING
-from collections.abc import Callable
+from dataclasses import dataclass
 
-from .models import ComposedAnswer
-from .coverage_validation import validate_answer_coverage
-from .synthesis import CitationClaim
-from .semantic_validation import validate_citation_claim
+
+@dataclass
+class ConflictCitation:
+    raw_claim: str
+    attributed_claim: str
+    chunk_id: str
+
+
+@dataclass
+class ConflictPresentation:
+    answer: str
+    conflicts: list[dict]
+    citations: list[ConflictCitation]
+    has_unresolved: bool
+
 
 if TYPE_CHECKING:
     from ..agent.state import Evidence, ResearchState
 
 
-def compose_conflict_answer(
+def build_conflict_presentation(
     state: "ResearchState", evidence_by_id: dict[str, "Evidence"],
-    *, validate_coverage: Callable[[str], object] | None = None,
-    validate_semantics: Callable[[str], object] | None = None,
-) -> ComposedAnswer:
-    """Preserve all claims and report only resolutions supplied by Person B.
-
-    Missing claim chunk IDs retain source attribution without fabricating a
-    citation. Supplied but unknown IDs fail, as in the clean synthesis path.
-    No synthesis call is made. Coverage checks the final presentation against
-    B's supplied decisions without selecting a winner from the passages.
-    """
+) -> ConflictPresentation:
+    """Build B's report and check references without synthesis or finalization."""
     paragraphs = []
     conflicts = []
-    citations = []
-    citation_claims = []
     citable_claims = []
     unresolved = False
 
@@ -56,8 +57,7 @@ def compose_conflict_answer(
                 continue
             if claim.chunk_id not in evidence_by_id:
                 raise ValueError(f"Unknown conflict chunk_id: {claim.chunk_id}")
-            citation_claims.append(CitationClaim(claim=attributed_claim, chunk_id=claim.chunk_id))
-            citable_claims.append((claim, attributed_claim))
+            citable_claims.append(ConflictCitation(claim.claim, attributed_claim, claim.chunk_id))
 
         if conflict.resolved_value is None:
             unresolved = True
@@ -71,36 +71,4 @@ def compose_conflict_answer(
                 lines.append(f"Supplied resolution: {conflict.resolution}")
         paragraphs.append("\n".join(lines))
 
-    if state.unresolved_claims:
-        paragraphs.append("Remaining research gaps:\n" + "\n".join(state.unresolved_claims))
-
-    answer = "\n\n".join(paragraphs)
-    validate_answer_coverage(
-        answer, citation_claims, validate_coverage=validate_coverage,
-        unresolved_claims=state.unresolved_claims, conflicts=conflicts,
-    )
-    if citable_claims and validate_semantics is None:
-        raise ValueError("A semantic-validation adapter is required for conflict citations")
-    for claim, attributed_claim in citable_claims:
-        validate_citation_claim(
-            claim.claim, claim.chunk_id, evidence_by_id,
-            validate_semantics=validate_semantics, conflict_attribution=True,
-        )
-        evidence = evidence_by_id[claim.chunk_id]
-        citations.append({
-            "claim": attributed_claim,
-            "filename": evidence.filename,
-            "page": evidence.page,
-            "section": evidence.section,
-            "source_type": evidence.source_type,
-        })
-    return ComposedAnswer(
-        question=state.question,
-        answer=answer,
-        status=("partial_gap_stated" if unresolved or state.unresolved_claims
-                else "complete_with_conflict"),
-        confidence=state.confidence,
-        citations=citations,
-        conflicts=conflicts,
-        iterations_used=state.iteration,
-    )
+    return ConflictPresentation("\n\n".join(paragraphs), conflicts, citable_claims, unresolved)

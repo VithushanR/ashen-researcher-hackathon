@@ -216,7 +216,7 @@ def test_no_evidence_report_is_checked_with_authoritative_context():
 def test_conflict_report_coverage_preserves_upstream_decisions(resolved_value):
     supplied = conflict(resolved_value=resolved_value)
     coverage = Mock(return_value={"coverage": "complete"})
-    synthesize = Mock()
+    synthesize = Mock(return_value={"answer": None, "citation_claims": []})
     semantics = Mock(side_effect=supported_semantics)
     result = compose_answer(research(supplied), synthesize=synthesize,
                             validate_coverage=coverage, validate_semantics=semantics)
@@ -226,13 +226,13 @@ def test_conflict_report_coverage_preserves_upstream_decisions(resolved_value):
     assert payload["research_context"]["conflicts"][0]["resolved_value"] == resolved_value
     assert len(payload["citation_claims"]) == 2
     assert result.status == ("partial_gap_stated" if resolved_value is None else "complete_with_conflict")
-    synthesize.assert_not_called()
+    synthesize.assert_called_once()
     assert semantics.call_count == 2
 
 
 def test_conflict_report_cannot_bypass_missing_or_failing_coverage():
     with pytest.raises(ValueError, match="coverage-validation adapter is required"):
-        compose_answer(research(conflict()), synthesize=Mock())
+        compose_answer(research(conflict()), synthesize=Mock(return_value={"answer": None, "citation_claims": []}))
     with pytest.raises(CitationCoverageError):
-        compose_answer(research(conflict()), synthesize=Mock(),
+        compose_answer(research(conflict()), synthesize=Mock(return_value={"answer": None, "citation_claims": []}),
                        validate_coverage=Mock(return_value={"coverage": "uncertain"}))

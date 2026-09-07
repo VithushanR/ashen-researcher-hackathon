@@ -2,7 +2,7 @@
 
 import json
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class CitationClaim(BaseModel):
@@ -29,8 +29,26 @@ class PartialSynthesisResult(SynthesisResult):
     citation_claims: list[CitationClaim] = Field(min_length=0)
 
 
+class OrdinarySectionResult(BaseModel):
+    """Optional independent contribution alongside deterministic conflict text."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    answer: str | None
+    citation_claims: list[CitationClaim]
+
+    @model_validator(mode="after")
+    def consistent_section(self):
+        if self.answer is None:
+            if self.citation_claims:
+                raise ValueError("An absent ordinary section cannot contain claims")
+        elif not self.answer.strip() or not self.citation_claims:
+            raise ValueError("An ordinary section needs nonempty text and cited claims")
+        return self
+
+
 def build_synthesis_prompt(
-    question: str, evidence: list[dict[str, str]], *, unresolved_claims: list[str] | None = None
+    question: str, evidence: list[dict[str, str]], *, unresolved_claims: list[str] | None = None,
+    conflicts: list[dict] | None = None,
 ) -> str:
     """Separate usable evidence from authoritative gaps supplied by Person B."""
     instructions = """Answer the question using only the supplied evidence.
@@ -68,7 +86,7 @@ metadata. Return structured JSON only, with exactly this shape:
 INPUT DATA:
 """
     payload = {"question": question, "evidence": evidence}
-    if unresolved_claims:
+    if unresolved_claims and not conflicts:
         partial_rules = """This research is incomplete. The unresolved_claims below are
 authoritative descriptions of what the research could not establish, not evidence.
 Answer only the supported parts. State those gaps as unresolved; do not fill them
@@ -83,4 +101,21 @@ citation_claims list and explain that limitation without adding factual claims.
 """
         instructions = instructions.replace("INPUT DATA:\n", partial_rules + "INPUT DATA:\n")
         payload["unresolved_claims"] = unresolved_claims
+    if conflicts:
+        instructions = instructions.replace("INPUT DATA:\n", """Independent ordinary section only:
+The supplied conflicts are authoritative exclusions, not decisions for you to make.
+Do not restate, paraphrase, resolve, choose between, or strengthen disputed claims.
+Do not report even B's preferred result here; deterministic presentation handles it.
+Use ALL supplied evidence for independent facts, including independent facts in a
+chunk that also contains a disputed claim. Entity or chunk overlap is not exclusion.
+Do not narrate unresolved gaps; the composer appends those exactly once.
+Those gaps remain authoritative: do not fill them with guesses or strengthened
+evidence, and do not independently declare the research sufficient.
+If nothing independent can be added, return {"answer": null, "citation_claims": []}.
+Otherwise return nonempty independent answer text with its atomic cited claims.
+
+INPUT DATA:
+""")
+        payload["conflicts"] = conflicts
+        payload["unresolved_claims"] = unresolved_claims or []
     return instructions + json.dumps(payload, ensure_ascii=False)

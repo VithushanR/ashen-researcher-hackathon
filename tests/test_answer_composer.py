@@ -17,7 +17,8 @@ def evidence(chunk_id="test_a", **overrides):
     fields = dict(
         chunk_id=chunk_id, document_id=None, filename="synthetic.pdf",
         source_type="codex", reliability="T1_authoritative", page=7,
-        section="Test section", text="Synthetic record states the test gate is blue. More context.",
+        section="Test section", content_type="text",
+        text="Synthetic record states the test gate is blue. More context.",
         entities=[],
     )
     fields.update(overrides)

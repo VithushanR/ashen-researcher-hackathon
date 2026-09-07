@@ -2,8 +2,39 @@
 
 These are the agreed shared contracts for Persons B, C, and D. The Python
 definitions below document the interfaces; they are not an implementation.
-`BaseModel` refers to Pydantic. `Evidence` and `TraceStep` refer to the shared
-types used by Person B; their fields are not defined by this update.
+`BaseModel` and `Field` refer to Pydantic. `Evidence` and `TraceStep` are shared
+types owned by Person B. The confirmed Evidence shape is documented below;
+TraceStep's fields are not defined here.
+
+## Evidence: Person B's normalized input to Person C
+
+```python
+class Evidence(BaseModel):
+    chunk_id: str
+    document_id: str | None = None
+    filename: str
+    source_type: str
+    reliability: str
+    page: int | None = None
+    section: str | None = None
+    content_type: str = "text"
+    text: str
+    entities: list[str] = Field(default_factory=list)
+```
+
+Confirmed content types are `text`, `table`, `image`, and `vision_description`.
+`image_derived` is an additional source type. Person B creates a new Evidence
+item for a vision description; it does not replace or mutate the original image
+chunk. Person C does not implement a second copy of this production model.
+
+Person C uses the supplied text for synthesis and semantic support checks.
+For a vision-derived claim, citation filename remains the original image filename,
+source_type remains `image_derived`, and page/section are copied exactly. The
+existing page -> section -> filename location fallback applies. A raw image's
+caption supports only facts stated in that text, not unseen visual attributes.
+Provenance comes from Evidence metadata, never from the chunk-ID naming pattern;
+the vision model itself is not the cited source. No new answer status or visual
+confidence field is introduced.
 
 ## ClaimSource and Conflict
 

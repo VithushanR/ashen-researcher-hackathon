@@ -153,6 +153,41 @@ These checks require semantic interpretation and cannot be replaced by a
 keyword blacklist. Implementation must use the team's agreed validation boundary
 and failure policy; no provider or model is selected in this design.
 
+## Visual evidence compatibility and limits
+
+Vision-derived evidence is validated for internal consistency between the final claim and the vision-model description, but the vision description is not independently re-verified against the original image pixels.
+
+`vision_description` follows the existing text-based synthesis, coverage, and
+semantic support path. It is already-normalized Evidence from Person B, not an
+instruction to load an image or call a vision model. No production code change
+was needed for this compatibility: the generic path consumes Evidence.text and
+copies citation metadata directly. `text` and `table` retain the same behavior.
+
+For image-derived claims, the citation uses the original image filename,
+`source_type="image_derived"`, and the exact supplied page and section. Provenance
+is taken from Evidence metadata, not parsed from chunk_id. The vision model is
+not cited as a source. B's new vision item and original image item remain separate.
+
+Reliability on image_derived evidence currently represents the inherited
+authority tier of the original source, not independent confidence in the vision
+interpretation. Person C neither re-ranks that source nor recalculates confidence.
+
+Person C must not infer visual facts from a thin raw image caption. A relevant
+image name is not support for an unstated appearance, count, or symbol. A raw
+caption may support a fact literally stated in its text. A claim citing a raw
+caption cannot borrow support from another chunk's vision description. Uncertain
+vision text such as "appears to show a raven" cannot support "definitely shows a
+raven"; the existing semantic gate rejects an unsupported verdict, while a
+faithfully hedged claim may pass. The semantic adapter remains responsible for
+that judgment; deterministic regression tests inject verdicts and verify the
+actual referenced text and rejection behavior without testing image pixels.
+
+Visual-answer accuracy should be included in later real/hand-verified evaluation,
+with reviewers inspecting original images as well as answers and descriptions.
+The current evaluation infrastructure does not measure image-grounded accuracy.
+Vision calls, targeted vision prompts, repeated-call prevention, sufficiency,
+conflict decisions, and any shared provider wiring remain outside Person C.
+
 ## Acceptance cases
 
 All examples below are synthetic, not archive facts.

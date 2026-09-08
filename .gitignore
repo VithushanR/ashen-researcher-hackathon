@@ -9,3 +9,5 @@ venv/
 chroma_db/
 *.jsonl
 !fixtures/*.jsonl
+
+data/

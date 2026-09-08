@@ -1,10 +1,14 @@
 """
 FAKE STAND-IN for Person A's real hybrid_search().
 
-Person B: import and use this from Day 1. Swap the import for the real
+Person B imports this from Day 1. Swap the import in loop.py for the real
 `retrieval.hybrid_search` the moment Person A hands it off — the function
-signature and return shape are identical, so nothing else in your loop
-code should need to change.
+signature and return shape (Contract 2) are identical, so nothing else in
+the loop should need to change.
+
+Location note: this lives in the repo-root fixtures/ folder (sibling of
+src/), per the Fake Data Fixtures plan, so it can be shared across the
+team and reused by pytest later.
 """
 import json
 import random
@@ -19,10 +23,10 @@ def hybrid_search(query: str, k: int = 8) -> list[dict]:
     Fake version of Contract 2. Returns up to k chunk dicts (Contract 1
     format), best match first.
 
-    This fake version does NOT do real search — it just returns chunks
-    whose text loosely overlaps with the query, or a random sample if
-    nothing matches, so the agent loop always has *something* to reason
-    about while Person A's real index isn't ready yet.
+    Does NOT do real search — returns chunks whose text loosely overlaps
+    with the query, or a random sample if nothing matches, so the agent
+    loop always has something to reason about while Person A's real index
+    isn't ready yet.
     """
     query_words = set(query.lower().split())
     scored = []
@@ -37,9 +41,3 @@ def hybrid_search(query: str, k: int = 8) -> list[dict]:
         return random.sample(_ALL_CHUNKS, min(k, len(_ALL_CHUNKS)))
 
     return [chunk for _, chunk in scored[:k]]
-
-
-if __name__ == "__main__":
-    results = hybrid_search("Isolde Mournvale faction", k=3)
-    for r in results:
-        print(r["chunk_id"], "-", r["text"][:70])

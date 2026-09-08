@@ -1,0 +1,62 @@
+[
+  {
+    "chunk_id": "wiki_014_s2",
+    "document_id": "wiki_014",
+    "filename": "isolde_mournvale.md",
+    "source_type": "wiki",
+    "reliability": "T2_curated",
+    "page": null,
+    "section": "Affiliations",
+    "content_type": "text",
+    "text": "Isolde Mournvale, also known as 'the Hollow Blade', has been a sworn member of the Ashen Order since 341 AS, serving under Commander Ederon Fellgard in the order's western chapter.",
+    "entities": ["Isolde Mournvale", "Ashen Order", "Ederon Fellgard"]
+  },
+  {
+    "chunk_id": "codex_02_p47_c3",
+    "document_id": "codex_02",
+    "filename": "annals_of_the_ashen_era_vol2.pdf",
+    "source_type": "codex",
+    "reliability": "T1_authoritative",
+    "page": 47,
+    "section": "Military Campaigns — The War of Drowned Light",
+    "content_type": "text",
+    "text": "The Ashen Order emerged victorious in the War of Drowned Light in 358 AS, having broken the Riverlands' naval blockade at the Battle of Cinderreach.",
+    "entities": ["Ashen Order", "War of Drowned Light", "Riverlands"]
+  },
+  {
+    "chunk_id": "ephemera_091_p2",
+    "document_id": "ephemera_091",
+    "filename": "letter_gravemaw_sighting.txt",
+    "source_type": "ephemera",
+    "reliability": "T4_unverified",
+    "page": 2,
+    "section": null,
+    "content_type": "text",
+    "text": "They say the Gauntlet of Sorrowfell was forged in the winter of 312 AS, though old Harrow always claimed it was closer to 300, back before the Order even had a name.",
+    "entities": ["Gauntlet of Sorrowfell"]
+  },
+  {
+    "chunk_id": "codex_01_p112_table4",
+    "document_id": "codex_01",
+    "filename": "annals_of_the_ashen_era_vol1.pdf",
+    "source_type": "codex",
+    "reliability": "T1_authoritative",
+    "page": 112,
+    "section": "Figure Plate 4 — Artifact Forging Records",
+    "content_type": "table",
+    "text": "Artifact: Gauntlet of Sorrowfell | Forged: 341 AS | Forgemaster: Kellan Ashgrove | Attunement cost: 3 shards of will",
+    "entities": ["Gauntlet of Sorrowfell", "Kellan Ashgrove"]
+  },
+  {
+    "chunk_id": "chronicles_03_ch12_p203",
+    "document_id": "chronicles_03",
+    "filename": "the_ashen_chronicles_vol3.pdf",
+    "source_type": "novel",
+    "reliability": "T3_narrative",
+    "page": 203,
+    "section": "Chapter 12",
+    "content_type": "text",
+    "text": "Ravena Stormwell had never doubted her order's cause, not even in the frozen months after Drowned Light, when half the western chapter still whispered they had won by luck alone.",
+    "entities": ["Ravena Stormwell", "War of Drowned Light"]
+  }
+]

@@ -84,7 +84,7 @@ def test_clean_research_state_handoff(monkeypatch):
     search = Mock(return_value=[chunk("gate", fact, filename="synthetic.pdf", page=7)])
     state = research("What color is the synthetic gate?", search_fn=search)
     assert state.trace[-1].verdict == "sufficient"
-    assert state.required_claims == []
+    assert state.required_claims == [state.question]
     result, checked = handoff(state, fact, "gate")
     assert result.status == "complete"
     assert result.answer == fact
@@ -167,3 +167,11 @@ def test_real_vision_fallback_evidence_handoff(monkeypatch):
     assert result.citations[0]["filename"] == "synthetic_banner.png"
     assert result.citations[0]["source_type"] == "image_derived"
     assert len(checked) == 1
+
+
+@pytest.fixture(autouse=True)
+def mock_requirement_model(monkeypatch):
+    def respond(prompt):
+        question = json.loads(prompt.split("QUESTION DATA:\n", 1)[1])
+        return json.dumps({"required_claims": [question]})
+    monkeypatch.setattr("agent.planner.call_llm", respond)

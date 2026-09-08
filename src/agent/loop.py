@@ -23,7 +23,7 @@ not nested inside src/agent/ — import accordingly.
 """
 from agent.state import ResearchState, Evidence, TraceStep
 from agent.router import derive_route
-from agent.planner import plan_first_query, plan_next_query
+from agent.planner import derive_required_claims, plan_first_query, plan_next_query
 from agent.evidence import analyze_evidence
 from agent.sufficiency import check_sufficiency
 from agent.conflict import detect_conflicts, resolve_conflicts
@@ -46,6 +46,7 @@ def research(
     one-line edit at the call site, not a change to this function.
     """
     state = ResearchState(question=question)
+    state.required_claims = derive_required_claims(question)
     query = plan_first_query(question)
     stale_rounds = 0
 

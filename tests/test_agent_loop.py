@@ -269,3 +269,11 @@ def test_vision_fallback_stops_when_image_has_nothing(monkeypatch):
     assert not any(e.source_type == "image_derived" for e in state.evidence)
     assert state.iteration <= 5
     assert state.confidence < 90
+
+
+@pytest.fixture(autouse=True)
+def mock_requirement_model(monkeypatch):
+    def respond(prompt):
+        question = json.loads(prompt.split("QUESTION DATA:\n", 1)[1])
+        return json.dumps({"required_claims": [question]})
+    monkeypatch.setattr("agent.planner.call_llm", respond)

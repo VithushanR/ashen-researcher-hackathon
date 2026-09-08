@@ -1,32 +1,31 @@
 {
-  "_comment": "Person D's fake /ask payloads. Three cases on purpose: a clean multi-hop success, a resolved source-conflict, and an iteration-capped partial answer. Building the UI against only the happy path means the conflict and partial states never get built until it is too late. Conflict shape follows docs/contracts.md (multi-claim), NOT the older pairwise claim_a/claim_b shape in the fixtures PDF.",
-
+  "_comment": "Canned answers for the three states the UI must handle: a clean multi-hop answer, a resolved source conflict, and an honest partial. Served by src/api/pipeline.py whenever the real pipeline is unavailable.\n\nEVERY filename here is a real file in the Ashen Era Archive and every `text` field is a verbatim quote from it, so 'Open source file' resolves and a judge clicking through never lands on a file that does not exist. The earlier version of this fixture used invented filenames (letter_gravemaw_sighting.txt, annals_of_the_ashen_era_vol1.pdf) written from the spec PDF before anyone had seen the corpus; they 404'd, and their invented claims contradicted the archive.\n\nThe answers are still fabricated in the sense that no pipeline produced them -- but they are consistent with the archive, so the stub demo cannot be caught contradicting a source a judge opens.",
   "clean_answer_example": {
-    "question": "Which war was won by the organization that included Isolde Mournvale as one of its members?",
-    "answer": "The War of Drowned Light. Isolde Mournvale is a sworn member of the Ashen Order [isolde_mournvale.md], and the Ashen Order won the War of Drowned Light in 358 AS [annals_of_the_ashen_era_vol2.pdf, p.47].",
+    "question": "Where is the organization that Isolde Mournvale is a member of seated?",
+    "answer": "Vharencrag Fortress. Isolde Mournvale is a member of The Silent Choir [isolde_mournvale.md], and The Silent Choir is seated at Vharencrag Fortress [the_silent_choir.md].",
     "status": "complete",
     "confidence": 92,
     "route": "multihop",
     "citations": [
       {
-        "claim": "Isolde Mournvale is a member of the Ashen Order",
+        "claim": "Isolde Mournvale is a member of The Silent Choir",
         "filename": "isolde_mournvale.md",
         "page": null,
-        "section": "Affiliations",
+        "section": "Relationships & Affiliations",
         "source_type": "wiki",
         "reliability": "T2_curated",
-        "chunk_id": "wiki_014_s2",
-        "text": "Isolde Mournvale, also known as the Hollow Blade, has been a sworn member of the Ashen Order since 341 AS, serving under Commander Ederon Fellgard in the order's western chapter."
+        "chunk_id": "wiki_isolde_mournvale_s1",
+        "text": "Isolde Mournvale is a minor figure of the Ashen Era, born in 341 AS. She serves as a falconer and is a member of The Silent Choir. Her known service is located at Stormmarch."
       },
       {
-        "claim": "The Ashen Order won the War of Drowned Light in 358 AS",
-        "filename": "annals_of_the_ashen_era_vol2.pdf",
-        "page": 47,
-        "section": "Military Campaigns - The War of Drowned Light",
-        "source_type": "codex",
-        "reliability": "T1_authoritative",
-        "chunk_id": "codex_02_p47_c3",
-        "text": "The Ashen Order emerged victorious in the War of Drowned Light in 358 AS, having broken the Riverlands' naval blockade at the Battle of Cinderreach."
+        "claim": "The Silent Choir is seated at Vharencrag Fortress",
+        "filename": "the_silent_choir.md",
+        "page": null,
+        "section": "Overview",
+        "source_type": "wiki",
+        "reliability": "T2_curated",
+        "chunk_id": "wiki_the_silent_choir_s1",
+        "text": "The Silent Choir is a secretive priesthood that records, censors, and rewrites history. The Silent Choir is seated at Vharencrag Fortress and has been belligerent in The War of Drowned Light, The War of Endless Vigil, and The Winter Reckoning."
       }
     ],
     "conflicts": [],
@@ -36,46 +35,55 @@
       {
         "step": 1,
         "query": "Isolde Mournvale",
-        "found": "wiki_014_s2 - Isolde Mournvale is a sworn member of the Ashen Order.",
+        "found": "wiki_isolde_mournvale_s1 - member of The Silent Choir, serves at Stormmarch.",
         "verdict": "insufficient",
-        "missing": "Which war the Ashen Order won."
+        "missing": "Where The Silent Choir is seated."
       },
       {
         "step": 2,
-        "query": "Ashen Order war victory",
-        "found": "codex_02_p47_c3 - The Ashen Order won the War of Drowned Light in 358 AS.",
+        "query": "The Silent Choir seat",
+        "found": "wiki_the_silent_choir_s1 - seated at Vharencrag Fortress.",
         "verdict": "sufficient",
         "missing": null
       }
     ]
   },
-
   "conflict_answer_example": {
     "question": "In which year was the Gauntlet of Sorrowfell actually forged?",
-    "answer": "341 AS, according to the official codex record naming forge-master Kellan Ashgrove [annals_of_the_ashen_era_vol1.pdf, p.112]. Note: a personal letter gives a different, hedged year of approximately 312 AS [letter_gravemaw_sighting.txt, p.2]. We favour the codex because it is an official, specific record with a named forge-master, while the letter itself expresses uncertainty about its own claim.",
+    "answer": "391 AS. The Codex Vaeloria armory volume states the forging year plainly as the authoritative record and explicitly rejects competing accounts [codex_vaeloria_ii_armory_of_relics_and_bestiary.docx]. Two other sources decline to give a year: the wiki article calls the forging date contested and refers the reader to the Annals and Codex [gauntlet_of_sorrowfell.md], and the quartermaster's ledger records that the date is not in its supplied facts and forbids guessing one [quartermaster_ledger_concerning_gauntlet_of_sorrowfell.docx]. We take 391 AS because the codex is the tier-1 authoritative record, and the two dissenting sources do not assert a competing year -- they decline to assert any, which is an absence of evidence rather than a contradiction.",
     "status": "complete_with_conflict",
-    "confidence": 85,
+    "confidence": 88,
     "route": "multihop",
     "citations": [
       {
-        "claim": "Forged in 341 AS by Kellan Ashgrove",
-        "filename": "annals_of_the_ashen_era_vol1.pdf",
-        "page": 112,
-        "section": "Figure Plate 4 - Artifact Forging Records",
+        "claim": "The Gauntlet of Sorrowfell was forged in 391 AS",
+        "filename": "codex_vaeloria_ii_armory_of_relics_and_bestiary.docx",
+        "page": null,
+        "section": "Armory of Relics - Gauntlet of Sorrowfell",
         "source_type": "codex",
         "reliability": "T1_authoritative",
-        "chunk_id": "codex_01_p112_table4",
-        "text": "Artifact: Gauntlet of Sorrowfell | Forged: 341 AS | Forge-master: Kellan Ashgrove | Attunement cost: 3 shards of will"
+        "chunk_id": "codex_armory_gauntlet_c1",
+        "text": "The authoritative record states plainly: Gauntlet of Sorrowfell's forged is 391 AS. Popular accounts wrongly claim otherwise. Such accounts are rejected. The accepted forging date is 391 AS, and no competing date has standing in this codex."
       },
       {
-        "claim": "A letter claims approximately 312 AS",
-        "filename": "letter_gravemaw_sighting.txt",
-        "page": 2,
-        "section": null,
+        "claim": "The wiki treats the forging date as contested and assigns no year",
+        "filename": "gauntlet_of_sorrowfell.md",
+        "page": null,
+        "section": "History",
+        "source_type": "wiki",
+        "reliability": "T2_curated",
+        "chunk_id": "wiki_gauntlet_of_sorrowfell_s1",
+        "text": "Although its place of forging and present housing are recorded, the date of its forging is not established in the supplied records; accounts concerning the forging remain contested and should be referred to the Annals and Codex for authoritative treatment."
+      },
+      {
+        "claim": "The quartermaster's ledger records no forging date and forbids guessing one",
+        "filename": "quartermaster_ledger_concerning_gauntlet_of_sorrowfell.docx",
+        "page": null,
+        "section": "Quartermaster's Ledger",
         "source_type": "ephemera",
         "reliability": "T4_unverified",
-        "chunk_id": "ephemera_091_p2",
-        "text": "They say the Gauntlet of Sorrowfell was forged in the winter of 312 AS, though old Harrow always claimed it was closer to 300, back before the Order even had a name."
+        "chunk_id": "ephemera_qm_ledger_gauntlet_c3",
+        "text": "The forging date is not recorded in the supplied facts. Therefore, no date is to be guessed, copied from a damaged tag, or supplied by a claimant eager to make the relic seem older, younger, holier, or more obedient than the record permits."
       }
     ],
     "conflicts": [
@@ -83,18 +91,23 @@
         "attribute": "forging year",
         "claims": [
           {
-            "claim": "Forged in 312 AS (approximate, hedged)",
-            "source": "letter_gravemaw_sighting.txt, p.2 (ephemera, T4_unverified)",
-            "chunk_id": "ephemera_091_p2"
+            "claim": "Forged in 391 AS",
+            "source": "codex_vaeloria_ii_armory_of_relics_and_bestiary.docx (codex)",
+            "chunk_id": "codex_armory_gauntlet_c1"
           },
           {
-            "claim": "Forged in 341 AS",
-            "source": "annals_of_the_ashen_era_vol1.pdf, p.112 (codex, T1_authoritative)",
-            "chunk_id": "codex_01_p112_table4"
+            "claim": "Contested; no year should be assigned",
+            "source": "gauntlet_of_sorrowfell.md (wiki)",
+            "chunk_id": "wiki_gauntlet_of_sorrowfell_s1"
+          },
+          {
+            "claim": "Not recorded; no date to be guessed",
+            "source": "quartermaster_ledger_concerning_gauntlet_of_sorrowfell.docx (ephemera)",
+            "chunk_id": "ephemera_qm_ledger_gauntlet_c3"
           }
         ],
-        "resolution": "Codex preferred: higher reliability tier (T1 over T4), more specific record (names the forge-master and the exact year), and the letter hedges its own claim.",
-        "resolved_value": "341 AS"
+        "resolution": "Resolved on source authority. The codex is the tier-1 authoritative record, states the year without hedging, and explicitly rejects competing accounts. The wiki defers to the Codex for this exact question, so it is not a competing claim but a pointer to the one we followed. The ledger is tier-4 in-world ephemera and records only that its own sheet lacks the date.",
+        "resolved_value": "391 AS"
       }
     ],
     "unresolved_claims": [],
@@ -102,86 +115,81 @@
     "trace": [
       {
         "step": 1,
-        "query": "Gauntlet of Sorrowfell forged",
-        "found": "ephemera_091_p2 - a letter giving approximately 312 AS.",
+        "query": "Gauntlet of Sorrowfell forged year",
+        "found": "wiki_gauntlet_of_sorrowfell_s1 - forging date contested, no year given.",
         "verdict": "insufficient",
-        "missing": "A more authoritative source for the forging year."
+        "missing": "An authoritative source that states a forging year."
       },
       {
         "step": 2,
-        "query": "Gauntlet of Sorrowfell forging codex record",
-        "found": "codex_01_p112_table4 - Figure Plate 4 gives 341 AS.",
+        "query": "Gauntlet of Sorrowfell codex armory forged",
+        "found": "codex_armory_gauntlet_c1 - Forged: 391 AS, stated as authoritative.",
         "verdict": "conflict_detected",
-        "missing": "Resolve the disagreement between 312 AS and 341 AS."
+        "missing": "Whether any source asserts a different year."
       },
       {
         "step": 3,
-        "query": "Gauntlet of Sorrowfell forge-master verification",
-        "found": "No third source found; the codex record stands uncontradicted by any T1-T2 source.",
+        "query": "Gauntlet of Sorrowfell ledger forging date",
+        "found": "ephemera_qm_ledger_gauntlet_c3 - date not recorded, guessing forbidden.",
         "verdict": "sufficient",
         "missing": null
       }
     ]
   },
-
   "partial_answer_example": {
-    "question": "Whose dominion encompasses the lair of the Gravemaw Wyrm?",
-    "answer": "Not fully determined from the archive. The Gravemaw Wyrm's lair is located in the Hollow Vale [letter_gravemaw_sighting.txt, p.2], but no retrieved source establishes which house or faction holds dominion over that region. This is the gap preventing a complete answer.",
+    "question": "In which year was Marrowwell Abbey, the lair of the Gravemaw Wyrm, founded?",
+    "answer": "This cannot be answered from the archive. The lair of the Gravemaw Wyrm is Marrowwell Abbey [gravemaw_wyrm.md], and the abbey is a rebuilt religious stronghold in The Gloaming Reach ruled by The Bleeding Crown [marrowwell_abbey.md] -- but its founding date is explicitly recorded as contested and not established, with the reader referred to the Annals and Codex. We found no year in either. Rather than infer one from the abbey's rebuilt status, we are stating the gap.",
     "status": "partial_gap_stated",
-    "confidence": 41,
+    "confidence": 40,
     "route": "multihop",
     "citations": [
       {
-        "claim": "The Gravemaw Wyrm's lair is in the Hollow Vale",
-        "filename": "letter_gravemaw_sighting.txt",
-        "page": 2,
-        "section": null,
-        "source_type": "ephemera",
-        "reliability": "T4_unverified",
-        "chunk_id": "ephemera_091_p2",
-        "text": "The Gravemaw Wyrm was last sighted deep in the Hollow Vale, far past any patrolled road."
+        "claim": "The lair of the Gravemaw Wyrm is Marrowwell Abbey",
+        "filename": "gravemaw_wyrm.md",
+        "page": null,
+        "section": "Overview",
+        "source_type": "wiki",
+        "reliability": "T2_curated",
+        "chunk_id": "wiki_gravemaw_wyrm_s1",
+        "text": "The Gravemaw Wyrm is a threat-rating 8 creature and a sky hunter whose presence makes open skies perilous wherever it ranges. Its lair is recorded as Marrowwell Abbey, making the abbey both a significant point of reference in accounts of the creature and a place of particular danger to those exposed beneath its hunting grounds."
+      },
+      {
+        "claim": "Marrowwell Abbey's founding date is contested and not established",
+        "filename": "marrowwell_abbey.md",
+        "page": null,
+        "section": "Overview",
+        "source_type": "wiki",
+        "reliability": "T2_curated",
+        "chunk_id": "wiki_marrowwell_abbey_s1",
+        "text": "Marrowwell Abbey is a rebuilt religious stronghold standing in The Gloaming Reach. Ruled by The Bleeding Crown, it maintains a garrison of 6656 despite not being a core holding. The date of its founding is contested among sources and is not established here; readers seeking the authoritative treatment should consult the Annals and the Codex."
       }
     ],
     "conflicts": [],
     "unresolved_claims": [
-      "Which house or faction holds dominion over the Hollow Vale is not established by any retrieved source."
+      "The founding year of Marrowwell Abbey. The wiki records it as contested and refers to the Annals and Codex; neither states a year for the abbey."
     ],
-    "iterations_used": 5,
+    "iterations_used": 3,
     "trace": [
       {
         "step": 1,
         "query": "Gravemaw Wyrm lair",
-        "found": "ephemera_091_p2 - the lair is in the Hollow Vale.",
+        "found": "wiki_gravemaw_wyrm_s1 - lair recorded as Marrowwell Abbey.",
         "verdict": "insufficient",
-        "missing": "Who holds dominion over the Hollow Vale."
+        "missing": "The founding year of Marrowwell Abbey."
       },
       {
         "step": 2,
-        "query": "Gravemaw Wyrm territory",
-        "found": "No new chunks.",
+        "query": "Marrowwell Abbey founding year",
+        "found": "wiki_marrowwell_abbey_s1 - founding date contested, not established.",
         "verdict": "insufficient",
-        "missing": "Same gap, no progress."
+        "missing": "An authoritative year from the Annals or Codex."
       },
       {
         "step": 3,
-        "query": "Gravemaw Wyrm region dominion",
-        "found": "No new chunks.",
-        "verdict": "insufficient",
-        "missing": "Same gap, no progress."
-      },
-      {
-        "step": 4,
-        "query": "creature lair ruling house",
-        "found": "Two unrelated chunks, discarded by the evidence analyzer.",
-        "verdict": "insufficient",
-        "missing": "Same gap, no progress."
-      },
-      {
-        "step": 5,
-        "query": "Gravemaw region controlling faction",
-        "found": "No new chunks.",
+        "query": "Marrowwell Abbey annals codex founded",
+        "found": "No chunk states a founding year for Marrowwell Abbey.",
         "verdict": "capped_unresolved",
-        "missing": "Who holds dominion over the Hollow Vale."
+        "missing": "The founding year is not present in the archive."
       }
     ]
   }

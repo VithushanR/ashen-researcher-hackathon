@@ -152,6 +152,12 @@ class HealthResponse(BaseModel):
     pipeline: str
     research_available: bool
     compose_available: bool
+    # Reported separately from `pipeline`, because they can legitimately
+    # disagree: a real loop searching fixture chunks is what you get on a
+    # machine with no VOYAGE_API_KEY, and one combined "real/stub" flag would
+    # call that state real.
+    retrieval_available: bool = False
+    retrieval: str = "fixture"
     streaming: str
 
 

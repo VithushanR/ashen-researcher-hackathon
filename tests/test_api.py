@@ -215,8 +215,15 @@ def test_conflict_case_carries_the_multi_claim_shape(client: TestClient) -> None
 
     # The losing claim must survive to the UI. Collapsing a disagreement into a
     # single value is the failure mode this feature exists to prevent.
-    claims = " ".join(c["claim"] for c in conflict["claims"])
-    assert "312 AS" in claims and "341 AS" in claims
+    #
+    # Asserted structurally rather than against literal years. The fixture was
+    # rewritten to quote the real archive, and hardcoded values ("312 AS",
+    # "341 AS") were invented ones that pinned the test to content rather than
+    # to the property being tested.
+    claims = [c["claim"] for c in conflict["claims"]]
+    assert conflict["resolved_value"] in " ".join(claims), "the winning claim must be present"
+    dissenting = [c for c in claims if conflict["resolved_value"] not in c]
+    assert dissenting, "every claim agrees -- then this is not a conflict"
 
 
 def test_partial_case_states_its_gap(client: TestClient) -> None:

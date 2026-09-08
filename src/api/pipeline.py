@@ -20,17 +20,27 @@ their entry point is a config change rather than a code change::
 
     ASHEN_RESEARCH_TARGET=agent.loop:research
     ASHEN_COMPOSE_TARGET=src.answer.composer:compose_answer
+    ASHEN_RETRIEVAL_TARGET=src.retrieval.hybrid_search:hybrid_search
+    ASHEN_BASELINE_TARGET=src.retrieval.baseline_rag:baseline_rag
 
-Person B's loop has landed on main, so ``agent.loop:research`` is now a real
-module rather than a guess. Person C's composer has not, so ``auto`` still
-serves the stub -- correctly, and ``/health`` says so.
+Persons A and B have landed on main, so three of those four are real modules
+rather than guesses. Person C's composer has not, so ``auto`` still serves the
+stub -- correctly, and ``/health`` says so.
 
-Note the asymmetry in those two module paths. It is not a typo. Person B's
-modules import each other as ``from agent.state import ...``, so they only
-resolve with ``src/`` itself on ``sys.path``, and they must be addressed as
-``agent.loop``. Person C's modules use relative imports, so they resolve as
-``src.answer.composer`` from the repo root. :func:`_ensure_import_paths` puts
-both roots on the path so either style works at runtime.
+Note the asymmetry in those module paths. It is not a typo. Person B's modules
+import each other as ``from agent.state import ...``, so they only resolve with
+``src/`` itself on ``sys.path``, and they must be addressed as ``agent.loop``.
+Persons A and C use ``src.``-prefixed and relative imports respectively, so they
+resolve from the repo root. :func:`_ensure_import_paths` puts both roots on the
+path so every style works at runtime.
+
+**Real is not one flag.** Four things can independently be real or fake here:
+retrieval, the loop, the composer, and the trace being live rather than
+replayed. The project has now been bitten three times by collapsing them --
+an unimportable loop, a mis-spelled baseline target, and a real loop defaulting
+to fixture chunks -- each of which read as green on every visible signal.
+:func:`pipeline_status` therefore reports them separately, and the UI renders
+each one.
 """
 
 from __future__ import annotations
@@ -65,7 +75,14 @@ FIXTURE_PATH = Path(__file__).resolve().parents[2] / "fixtures" / "fake_api_resp
 # identity we match.
 DEFAULT_RESEARCH_TARGET = "agent.loop:research"
 DEFAULT_COMPOSE_TARGET = "src.answer.composer:compose_answer"
-DEFAULT_BASELINE_TARGET = "src.retrieval.baseline:baseline_rag"
+
+# Person A's modules import each other as `src.retrieval.*`, so they are
+# addressed from the repo root -- the third spelling in this file, and again
+# not a typo. The module is baseline_rag.py and the function inside it is also
+# baseline_rag; the earlier guess of "src.retrieval.baseline" was wrong and
+# resolved to None, which _load() swallows by design. See the session log.
+DEFAULT_BASELINE_TARGET = "src.retrieval.baseline_rag:baseline_rag"
+DEFAULT_RETRIEVAL_TARGET = "src.retrieval.hybrid_search:hybrid_search"
 
 # Repo root and src/. Both are needed to import Person B's agent package: the
 # modules import each other as `agent.*` (needs src/) and pull their fake
@@ -158,6 +175,39 @@ def _load_real_pipeline() -> tuple[Callable | None, Callable | None]:
     )
 
 
+def _load_retrieval() -> Callable | None:
+    """Person A's ``hybrid_search``, if the indexes and their deps are present.
+
+    This is the third silent-fake hazard of the project, and the same shape as
+    the first two. Person B's ``research()`` declares
+    ``search_fn=fake_hybrid_search`` as its *default* -- a sensible choice while
+    Person A had not landed, and a trap now that they have. Calling
+    ``research(question)`` still works, still returns a real ResearchState, and
+    still runs the genuine loop: over ``fixtures/fake_chunks.json``. Every signal
+    would read "real pipeline" while the archive was never searched.
+
+    So the seam injects the real search explicitly rather than relying on the
+    default, and when it cannot -- ``voyageai`` not installed, indexes not built,
+    ``VOYAGE_API_KEY`` unset -- :func:`pipeline_status` reports
+    ``retrieval: "fixture"`` instead of quietly running on canned chunks.
+    """
+    return _load("ASHEN_RETRIEVAL_TARGET", DEFAULT_RETRIEVAL_TARGET)
+
+
+def _accepts(func: Callable | None, parameter: str) -> bool:
+    """Does ``func`` take a parameter of this name?
+
+    A runtime probe rather than a hardcoded flag, so a teammate adding the
+    parameter switches the better path on without anyone editing this file.
+    """
+    if func is None:
+        return False
+    try:
+        return parameter in inspect.signature(func).parameters
+    except (TypeError, ValueError):  # builtins and C functions have no signature
+        return False
+
+
 def _supports_callback(research: Callable | None) -> bool:
     """Does Person B's ``research()`` accept an ``on_step`` callback?
 
@@ -176,24 +226,29 @@ def _supports_callback(research: Callable | None) -> bool:
     here needs to change when it lands, which is why the check is a signature
     probe rather than a hardcoded flag.
     """
-    if research is None:
-        return False
-    try:
-        return "on_step" in inspect.signature(research).parameters
-    except (TypeError, ValueError):  # builtins and C functions have no signature
-        return False
+    return _accepts(research, "on_step")
 
 
 def pipeline_status() -> dict[str, Any]:
-    """What is actually wired right now. Surfaced by /health and the UI sidebar."""
+    """What is actually wired right now. Surfaced by /health and the UI sidebar.
+
+    ``retrieval`` is reported separately from ``pipeline`` on purpose. They can
+    disagree -- a real loop searching fixture chunks is a perfectly plausible
+    state on a machine with no ``VOYAGE_API_KEY`` -- and collapsing them into one
+    "real/stub" flag is exactly how the demo ends up quietly fake again.
+    """
     research, compose = _load_real_pipeline()
+    search = _load_retrieval()
     mode = _mode()
     using_real = mode != "stub" and research is not None and compose is not None
+    searching_real = using_real and search is not None and _accepts(research, "search_fn")
     return {
         "mode": mode,
         "pipeline": "real" if using_real else "stub",
         "research_available": research is not None,
         "compose_available": compose is not None,
+        "retrieval_available": search is not None,
+        "retrieval": "real" if searching_real else "fixture",
         "streaming": "live" if using_real and _supports_callback(research) else "replayed",
     }
 
@@ -292,11 +347,29 @@ def _real_answer(
     compose: Callable,
     on_step: Callable[[Any], None] | None = None,
 ) -> dict[str, Any]:
-    """Run the real pipeline: Person B's loop, then Person C's composer."""
+    """Run the real pipeline: Person B's loop, then Person C's composer.
+
+    Both optional arguments are passed only if the loop declares them, so this
+    call site keeps working against B's current signature and picks up a better
+    one the moment it exists -- without a coordinated edit on both sides.
+
+    ``search_fn`` is passed *explicitly* even though the loop has a default for
+    it. The default is the fixture search, and inheriting it would mean running
+    the genuine agent over canned chunks while every status line said "real".
+    See :func:`_load_retrieval`.
+    """
+    kwargs: dict[str, Any] = {}
+
+    search = _load_retrieval()
+    if search is not None and _accepts(research, "search_fn"):
+        kwargs["search_fn"] = search
+    elif search is None:
+        logger.info("Real retrieval unavailable - the loop will run on fixture chunks")
+
     if on_step is not None and _supports_callback(research):
-        state = research(question, on_step=on_step)
-    else:
-        state = research(question)
+        kwargs["on_step"] = on_step
+
+    state = research(question, **kwargs)
     return _to_payload(state, _compose_with_adapters(compose, state), question)
 
 
@@ -359,8 +432,17 @@ def _baseline_answer(question: str) -> dict[str, Any]:
         stub["iterations_used"] = 1
         return stub
 
-    result = baseline_rag(question)
-    payload = dict(_as_dict(result))
+    try:
+        result = baseline_rag(question)
+    except Exception as error:  # noqa: BLE001 - the contrast toggle must never kill a run
+        logger.exception("Baseline RAG failed")
+        stub = normalise_response(_stub_answer(question))
+        stub["answer"] = f"[Baseline RAG failed: {error}]\n\n" + stub["answer"]
+        stub["trace"] = trace
+        stub["iterations_used"] = 1
+        return stub
+
+    payload = _baseline_payload(result)
     payload.setdefault("question", question)
     payload.setdefault("status", "complete")
     payload.setdefault("confidence", 0)
@@ -368,6 +450,32 @@ def _baseline_answer(question: str) -> dict[str, Any]:
     payload["trace"] = trace
     payload["is_stub"] = False
     return normalise_response(payload)
+
+
+def _baseline_payload(result: Any) -> dict[str, Any]:
+    """Normalise whatever ``baseline_rag()`` returned into a response dict.
+
+    As merged, Person A's contract is ``baseline_rag(question) -> str`` -- the
+    answer text and nothing else, which is the honest shape for a baseline that
+    does no citation tracking. The previous code here assumed a dict and did
+    ``dict(_as_dict(result))``, which on a string raises ``ValueError:
+    dictionary update sequence element #0 has length 1``.
+
+    That was unreachable while the target path was wrong, so it never fired.
+    Both halves are fixed together, because fixing only the target would have
+    turned a silently-stubbed baseline into a 500 on the demo's comparison
+    toggle.
+
+    A dict is still accepted, so if the baseline later grows citations it works
+    without another edit here.
+    """
+    if isinstance(result, str):
+        # No citations by design: the baseline stuffs top-k chunks into one
+        # prompt and never tracks which sentence came from which. Returning an
+        # empty citation list is the accurate statement, and it is also the
+        # thing the side-by-side is meant to show.
+        return {"answer": result, "citations": [], "conflicts": []}
+    return dict(_as_dict(result))
 
 
 def stream_question(question: str, *, baseline: bool = False) -> Iterator[dict[str, Any]]:

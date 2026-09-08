@@ -106,6 +106,8 @@ def health() -> HealthResponse:
         pipeline=status["pipeline"],
         research_available=status["research_available"],
         compose_available=status["compose_available"],
+        retrieval_available=status["retrieval_available"],
+        retrieval=status["retrieval"],
         streaming=status["streaming"],
     )
 
@@ -123,18 +125,15 @@ def health_detail() -> dict:
     unimportable ``llm`` module is *reported* here rather than raised.
     """
     try:
-        from .llm import FAST_MODEL, STRONG_MODEL, llm_available
+        from .llm import llm_available, model_status
 
-        llm_state = {
-            "available": True,
-            "key_configured": llm_available(),
-            "fast_model": FAST_MODEL,
-            "strong_model": STRONG_MODEL,
-        }
+        llm_state = {"available": True, "ready": llm_available(), **model_status()}
     except Exception as error:  # noqa: BLE001 - diagnostics must survive anything
         llm_state = {
             "available": False,
+            "ready": False,
             "key_configured": False,
+            "models_confirmed": False,
             "fast_model": None,
             "strong_model": None,
             "reason": str(error),

@@ -331,10 +331,20 @@ with st.sidebar:
 
     if health:
         st.markdown(
+            f"- Retrieval (A): {'✅' if health.get('retrieval_available') else '⏳ pending'}\n"
             f"- Agent loop (B): {'✅' if health['research_available'] else '⏳ pending'}\n"
             f"- Composer (C): {'✅' if health['compose_available'] else '⏳ pending'}\n"
+            f"- Searching: `{health.get('retrieval', 'fixture')}`\n"
             f"- Trace: `{health['streaming']}`"
         )
+        if health.get("retrieval") == "fixture" and health["pipeline"] == "real":
+            # The one state that looks fine and is not: the genuine loop,
+            # running over fixtures/fake_chunks.json. Called out loudly rather
+            # than left to be inferred from a green "real pipeline" banner.
+            st.warning(
+                "The loop is real but it is searching **fixture chunks**, not "
+                "the archive. Check `VOYAGE_API_KEY` and that the indexes are built."
+            )
         if health["streaming"] == "replayed":
             st.caption("`replayed` = the loop has no per-round callback yet, so the "
                        "trace is shown after the run rather than during it.")

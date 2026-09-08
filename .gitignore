@@ -11,3 +11,9 @@ chroma_db/
 !fixtures/*.jsonl
 
 data/
+
+# diskcache's store, written by src/api/robustness.py on the first cached call.
+# Path follows ASHEN_CACHE_DIR; .cache/ashen is the default. Safe to delete at
+# any time -- it holds model responses, which may include archive text, and it
+# must never reach a commit judges will read.
+.cache/

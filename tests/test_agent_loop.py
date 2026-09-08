@@ -71,7 +71,7 @@ def test_clean_multihop_success(monkeypatch):
         _sufficiency_response("partial", "yes", "Which war the Ashen Order won.", "insufficient"),
         _sufficiency_response("yes", "yes", None, "sufficient"),
     ])
-    monkeypatch.setattr("agent.sufficiency.call_llm", lambda prompt: next(sufficiency_calls))
+    monkeypatch.setattr("agent.sufficiency.call_llm", lambda prompt: _with_requirements(next(sufficiency_calls), prompt))
     monkeypatch.setattr("agent.conflict.call_llm", lambda prompt: _no_conflicts_response())
 
     state = research(
@@ -132,7 +132,7 @@ def test_conflict_detected_and_resolved(monkeypatch):
         _sufficiency_response("no", "conflict", "Resolve disagreement on forging year.", "conflict_detected"),
         _sufficiency_response("yes", "yes", None, "sufficient"),
     ])
-    monkeypatch.setattr("agent.sufficiency.call_llm", lambda prompt: next(sufficiency_calls))
+    monkeypatch.setattr("agent.sufficiency.call_llm", lambda prompt: _with_requirements(next(sufficiency_calls), prompt))
     monkeypatch.setattr("agent.conflict.call_llm", lambda prompt: conflict_response)
 
     state = research(
@@ -167,7 +167,7 @@ def test_capped_partial_answer(monkeypatch):
     always_insufficient = lambda prompt: _sufficiency_response(
         "no", "yes", "Which house holds dominion over the Hollow Vale.", "insufficient"
     )
-    monkeypatch.setattr("agent.sufficiency.call_llm", always_insufficient)
+    monkeypatch.setattr("agent.sufficiency.call_llm", lambda prompt: _with_requirements(always_insufficient(prompt), prompt))
     monkeypatch.setattr("agent.conflict.call_llm", lambda prompt: _no_conflicts_response())
 
     state = research(
@@ -211,7 +211,7 @@ def test_vision_fallback_on_image_only_evidence(monkeypatch):
         _sufficiency_response("no", "yes", "What emblem is on the banner.", "insufficient"),
         _sufficiency_response("yes", "yes", None, "sufficient"),
     ])
-    monkeypatch.setattr("agent.sufficiency.call_llm", lambda prompt: next(sufficiency_calls))
+    monkeypatch.setattr("agent.sufficiency.call_llm", lambda prompt: _with_requirements(next(sufficiency_calls), prompt))
     monkeypatch.setattr("agent.conflict.call_llm", lambda prompt: _no_conflicts_response())
 
     # Fake vision: never touches the network or the filesystem.
@@ -258,7 +258,7 @@ def test_vision_fallback_stops_when_image_has_nothing(monkeypatch):
 
     monkeypatch.setattr(
         "agent.sufficiency.call_llm",
-        lambda prompt: _sufficiency_response("no", "yes", "The emblem.", "insufficient"),
+        lambda prompt: _with_requirements(_sufficiency_response("no", "yes", "The emblem.", "insufficient"), prompt),
     )
     monkeypatch.setattr("agent.conflict.call_llm", lambda prompt: _no_conflicts_response())
     monkeypatch.setattr("agent.loop.describe_image", lambda f, q: "NOTHING RELEVANT")
@@ -277,3 +277,15 @@ def mock_requirement_model(monkeypatch):
         question = json.loads(prompt.split("QUESTION DATA:\n", 1)[1])
         return json.dumps({"required_claims": [question]})
     monkeypatch.setattr("agent.planner.call_llm", respond)
+
+
+def _with_requirements(raw, prompt):
+    """Extend legacy single-requirement model doubles to the internal schema."""
+    if "REQUIREMENT DATA:\n" not in prompt:
+        return raw
+    result = json.loads(raw)
+    checklist = json.loads(prompt.split("REQUIREMENT DATA:\n")[1])["required_claims"]
+    status = {"sufficient": "supported", "insufficient": "missing", "conflict_detected": "conflict"}[result["verdict"]]
+    result["requirements"] = [{"requirement": r, "status": status,
+        "missing_info": result["missing_info"]} for r in checklist]
+    return json.dumps(result)

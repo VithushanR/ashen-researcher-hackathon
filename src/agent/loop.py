@@ -117,6 +117,7 @@ def research(
                 state.unresolved_claims.append(verdict.missing_info)
             state.confidence = _compute_confidence(state, capped=True)
             state.route = derive_route(state.iteration)
+            _ensure_terminal_gap(state)
             return state
 
         # Next query: if a conflict was just flagged, prioritise a
@@ -145,7 +146,14 @@ def research(
         state.unresolved_claims.append(state.trace[-1].missing)
     state.confidence = _compute_confidence(state, capped=True)
     state.route = derive_route(state.iteration)
+    _ensure_terminal_gap(state)
     return state
+
+
+def _ensure_terminal_gap(state: ResearchState) -> None:
+    """A non-success exit must remain visibly incomplete to downstream consumers."""
+    if not state.unresolved_claims and not any(c.resolved_value is None for c in state.conflicts):
+        state.unresolved_claims.append("Research stopped before sufficiency was established.")
 
 
 def _has_undescribed_image(state: ResearchState) -> bool:

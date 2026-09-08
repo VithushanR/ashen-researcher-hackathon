@@ -10,7 +10,7 @@ from agent.loop import research
 from agent.state import ClaimSource, Conflict, Evidence, ResearchState, TraceStep
 from src.answer.composer import compose_answer
 from tests.answer_helpers import complete_coverage, supported_semantics
-from tests.test_agent_loop import _no_conflicts_response, _sufficiency_response
+from tests.test_agent_loop import _no_conflicts_response, _sufficiency_response, _with_requirements
 
 
 def chunk(cid, text, **changes):
@@ -34,7 +34,7 @@ def block_unexpected_external_calls(monkeypatch):
 def configure_b(monkeypatch, verdicts, conflicts=None):
     checker = Mock(side_effect=verdicts)
     detector = Mock(return_value=json.dumps(conflicts) if conflicts else _no_conflicts_response())
-    monkeypatch.setattr("agent.sufficiency.call_llm", checker)
+    monkeypatch.setattr("agent.sufficiency.call_llm", lambda prompt: _with_requirements(checker(prompt), prompt))
     monkeypatch.setattr("agent.conflict.call_llm", detector)
     return checker, detector
 

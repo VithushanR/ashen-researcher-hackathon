@@ -25,7 +25,7 @@ Note on scope (deliberately NOT handled here):
     existing capped/unresolved path. See docs/limitations.md.
 
 Requirement decomposition is separate from query generation. The loop stores
-its result once as passive state; it is not a list of proven facts.
+its result once as a stable sufficiency checklist; it is not a list of proven facts.
 """
 import json
 import logging

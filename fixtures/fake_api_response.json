@@ -1,0 +1,188 @@
+{
+  "_comment": "Person D's fake /ask payloads. Three cases on purpose: a clean multi-hop success, a resolved source-conflict, and an iteration-capped partial answer. Building the UI against only the happy path means the conflict and partial states never get built until it is too late. Conflict shape follows docs/contracts.md (multi-claim), NOT the older pairwise claim_a/claim_b shape in the fixtures PDF.",
+
+  "clean_answer_example": {
+    "question": "Which war was won by the organization that included Isolde Mournvale as one of its members?",
+    "answer": "The War of Drowned Light. Isolde Mournvale is a sworn member of the Ashen Order [isolde_mournvale.md], and the Ashen Order won the War of Drowned Light in 358 AS [annals_of_the_ashen_era_vol2.pdf, p.47].",
+    "status": "complete",
+    "confidence": 92,
+    "route": "multihop",
+    "citations": [
+      {
+        "claim": "Isolde Mournvale is a member of the Ashen Order",
+        "filename": "isolde_mournvale.md",
+        "page": null,
+        "section": "Affiliations",
+        "source_type": "wiki",
+        "reliability": "T2_curated",
+        "chunk_id": "wiki_014_s2",
+        "text": "Isolde Mournvale, also known as the Hollow Blade, has been a sworn member of the Ashen Order since 341 AS, serving under Commander Ederon Fellgard in the order's western chapter."
+      },
+      {
+        "claim": "The Ashen Order won the War of Drowned Light in 358 AS",
+        "filename": "annals_of_the_ashen_era_vol2.pdf",
+        "page": 47,
+        "section": "Military Campaigns - The War of Drowned Light",
+        "source_type": "codex",
+        "reliability": "T1_authoritative",
+        "chunk_id": "codex_02_p47_c3",
+        "text": "The Ashen Order emerged victorious in the War of Drowned Light in 358 AS, having broken the Riverlands' naval blockade at the Battle of Cinderreach."
+      }
+    ],
+    "conflicts": [],
+    "unresolved_claims": [],
+    "iterations_used": 2,
+    "trace": [
+      {
+        "step": 1,
+        "query": "Isolde Mournvale",
+        "found": "wiki_014_s2 - Isolde Mournvale is a sworn member of the Ashen Order.",
+        "verdict": "insufficient",
+        "missing": "Which war the Ashen Order won."
+      },
+      {
+        "step": 2,
+        "query": "Ashen Order war victory",
+        "found": "codex_02_p47_c3 - The Ashen Order won the War of Drowned Light in 358 AS.",
+        "verdict": "sufficient",
+        "missing": null
+      }
+    ]
+  },
+
+  "conflict_answer_example": {
+    "question": "In which year was the Gauntlet of Sorrowfell actually forged?",
+    "answer": "341 AS, according to the official codex record naming forge-master Kellan Ashgrove [annals_of_the_ashen_era_vol1.pdf, p.112]. Note: a personal letter gives a different, hedged year of approximately 312 AS [letter_gravemaw_sighting.txt, p.2]. We favour the codex because it is an official, specific record with a named forge-master, while the letter itself expresses uncertainty about its own claim.",
+    "status": "complete_with_conflict",
+    "confidence": 85,
+    "route": "multihop",
+    "citations": [
+      {
+        "claim": "Forged in 341 AS by Kellan Ashgrove",
+        "filename": "annals_of_the_ashen_era_vol1.pdf",
+        "page": 112,
+        "section": "Figure Plate 4 - Artifact Forging Records",
+        "source_type": "codex",
+        "reliability": "T1_authoritative",
+        "chunk_id": "codex_01_p112_table4",
+        "text": "Artifact: Gauntlet of Sorrowfell | Forged: 341 AS | Forge-master: Kellan Ashgrove | Attunement cost: 3 shards of will"
+      },
+      {
+        "claim": "A letter claims approximately 312 AS",
+        "filename": "letter_gravemaw_sighting.txt",
+        "page": 2,
+        "section": null,
+        "source_type": "ephemera",
+        "reliability": "T4_unverified",
+        "chunk_id": "ephemera_091_p2",
+        "text": "They say the Gauntlet of Sorrowfell was forged in the winter of 312 AS, though old Harrow always claimed it was closer to 300, back before the Order even had a name."
+      }
+    ],
+    "conflicts": [
+      {
+        "attribute": "forging year",
+        "claims": [
+          {
+            "claim": "Forged in 312 AS (approximate, hedged)",
+            "source": "letter_gravemaw_sighting.txt, p.2 (ephemera, T4_unverified)",
+            "chunk_id": "ephemera_091_p2"
+          },
+          {
+            "claim": "Forged in 341 AS",
+            "source": "annals_of_the_ashen_era_vol1.pdf, p.112 (codex, T1_authoritative)",
+            "chunk_id": "codex_01_p112_table4"
+          }
+        ],
+        "resolution": "Codex preferred: higher reliability tier (T1 over T4), more specific record (names the forge-master and the exact year), and the letter hedges its own claim.",
+        "resolved_value": "341 AS"
+      }
+    ],
+    "unresolved_claims": [],
+    "iterations_used": 3,
+    "trace": [
+      {
+        "step": 1,
+        "query": "Gauntlet of Sorrowfell forged",
+        "found": "ephemera_091_p2 - a letter giving approximately 312 AS.",
+        "verdict": "insufficient",
+        "missing": "A more authoritative source for the forging year."
+      },
+      {
+        "step": 2,
+        "query": "Gauntlet of Sorrowfell forging codex record",
+        "found": "codex_01_p112_table4 - Figure Plate 4 gives 341 AS.",
+        "verdict": "conflict_detected",
+        "missing": "Resolve the disagreement between 312 AS and 341 AS."
+      },
+      {
+        "step": 3,
+        "query": "Gauntlet of Sorrowfell forge-master verification",
+        "found": "No third source found; the codex record stands uncontradicted by any T1-T2 source.",
+        "verdict": "sufficient",
+        "missing": null
+      }
+    ]
+  },
+
+  "partial_answer_example": {
+    "question": "Whose dominion encompasses the lair of the Gravemaw Wyrm?",
+    "answer": "Not fully determined from the archive. The Gravemaw Wyrm's lair is located in the Hollow Vale [letter_gravemaw_sighting.txt, p.2], but no retrieved source establishes which house or faction holds dominion over that region. This is the gap preventing a complete answer.",
+    "status": "partial_gap_stated",
+    "confidence": 41,
+    "route": "multihop",
+    "citations": [
+      {
+        "claim": "The Gravemaw Wyrm's lair is in the Hollow Vale",
+        "filename": "letter_gravemaw_sighting.txt",
+        "page": 2,
+        "section": null,
+        "source_type": "ephemera",
+        "reliability": "T4_unverified",
+        "chunk_id": "ephemera_091_p2",
+        "text": "The Gravemaw Wyrm was last sighted deep in the Hollow Vale, far past any patrolled road."
+      }
+    ],
+    "conflicts": [],
+    "unresolved_claims": [
+      "Which house or faction holds dominion over the Hollow Vale is not established by any retrieved source."
+    ],
+    "iterations_used": 5,
+    "trace": [
+      {
+        "step": 1,
+        "query": "Gravemaw Wyrm lair",
+        "found": "ephemera_091_p2 - the lair is in the Hollow Vale.",
+        "verdict": "insufficient",
+        "missing": "Who holds dominion over the Hollow Vale."
+      },
+      {
+        "step": 2,
+        "query": "Gravemaw Wyrm territory",
+        "found": "No new chunks.",
+        "verdict": "insufficient",
+        "missing": "Same gap, no progress."
+      },
+      {
+        "step": 3,
+        "query": "Gravemaw Wyrm region dominion",
+        "found": "No new chunks.",
+        "verdict": "insufficient",
+        "missing": "Same gap, no progress."
+      },
+      {
+        "step": 4,
+        "query": "creature lair ruling house",
+        "found": "Two unrelated chunks, discarded by the evidence analyzer.",
+        "verdict": "insufficient",
+        "missing": "Same gap, no progress."
+      },
+      {
+        "step": 5,
+        "query": "Gravemaw region controlling faction",
+        "found": "No new chunks.",
+        "verdict": "capped_unresolved",
+        "missing": "Who holds dominion over the Hollow Vale."
+      }
+    ]
+  }
+}

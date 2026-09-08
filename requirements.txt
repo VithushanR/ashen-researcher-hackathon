@@ -1,16 +1,44 @@
+# Full install for the whole system:
+#     pip install -r requirements.txt
+#
+# Interface work only (Person D) does not need the ingestion and retrieval
+# stack, which is large and slow to install. That subset is:
+#     pip install fastapi uvicorn streamlit pydantic tenacity diskcache \
+#                 python-dotenv pytest requests httpx
+# Being able to run and test the interface without the retrieval stack is the
+# point of building against contracts rather than finished components.
+
+# --- Backend and UI ---
 fastapi
 uvicorn
 streamlit
+pydantic
+
+# --- HTTP clients: the UI calls the API, the tests call it through TestClient ---
+requests
+httpx
+
+# --- Robustness: retry with backoff, response caching, config ---
+tenacity
+diskcache
+python-dotenv
+
+# --- LLM providers (Person B's agent loop) ---
+# llm_client.py imports google.generativeai lazily, so the interface and its
+# tests run without this installed -- but the real agent loop cannot.
+google-generativeai
+
+# --- Retrieval and indexing (Person A) ---
 chromadb
 rank_bm25
 voyageai
+sentence-transformers
+
+# --- Document parsing (Person A) ---
 pymupdf
 pdfplumber
 python-docx
 pytesseract
-tenacity
-diskcache
-python-dotenv
-pydantic
+
+# --- Testing ---
 pytest
-sentence-transformers

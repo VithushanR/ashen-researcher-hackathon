@@ -23,6 +23,11 @@ tenacity
 diskcache
 python-dotenv
 
+# --- LLM providers (Person B's agent loop) ---
+# llm_client.py imports google.generativeai lazily, so the interface and its
+# tests run without this installed -- but the real agent loop cannot.
+google-generativeai
+
 # --- Retrieval and indexing (Person A) ---
 chromadb
 rank_bm25

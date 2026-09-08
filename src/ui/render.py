@@ -204,9 +204,10 @@ def status_badge(status: str) -> tuple[str, str]:
 def verdict_badge(verdict: str | None) -> tuple[str, str]:
     """Label and colour for one round's sufficiency verdict.
 
-    Person B has not fixed their verdict vocabulary yet, so an unrecognised
-    value is title-cased and rendered grey rather than dropped. The trace panel
-    keeps working when they add a verdict we have not styled.
+    VERDICT_STYLES covers every verdict Person B's merged loop emits. The
+    fallback stays anyway: an unrecognised value is title-cased and rendered
+    grey rather than dropped, so the trace panel keeps working if a new verdict
+    is added upstream before it is styled here.
     """
     if not verdict:
         return ("Searching", NEUTRAL)
@@ -260,6 +261,26 @@ def summarise_trace(trace: list[dict[str, Any]]) -> str:
         return f"Stopped after {rounds} {plural} — enough evidence."
     if final == "capped_unresolved":
         return f"Stopped after {rounds} {plural} — iteration cap reached with a gap remaining."
+    if final == "insufficient":
+        # A finished trace whose last round is still "insufficient" is a run
+        # that ran out of road: the loop only exits without a "sufficient"
+        # verdict when it hit the iteration cap, went two rounds without new
+        # evidence, or would have repeated a query.
+        #
+        # This branch exists because of what Person B's loop actually emits.
+        # TraceStep documents "capped_unresolved" as a verdict, but the verdict
+        # is copied straight from check_sufficiency(), which only ever returns
+        # sufficient / insufficient / conflict_detected -- so the terminal step
+        # of a capped run says "insufficient" and nothing ever says otherwise.
+        # Without this, the honest-partial run -- the case sub-track 1C is
+        # actually about -- fell through to the generic "N rounds recorded."
+        #
+        # Deriving it from the trace rather than waiting on a verdict rename
+        # keeps the summary truthful either way: if Person B does start
+        # emitting "capped_unresolved", the branch above takes over and this
+        # one goes quiet. Safe because summarise_trace is only ever called on a
+        # finished trace, never on a stream still in progress.
+        return f"Stopped after {rounds} {plural} — ended with a gap still open."
     if final == "conflict_detected":
         return f"{rounds} {plural} — sources disagreed."
     if final == "baseline_no_check":

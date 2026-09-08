@@ -86,10 +86,15 @@ class Conflict(BaseModel):
 class TraceStep(BaseModel):
     """One round of the research loop, as rendered in the live trace panel.
 
-    Only ``step`` is required. Person B has not fixed the field names yet
-    (docs/contracts.md says so explicitly), so everything else is optional and
-    extras are preserved. When their real names land, the fix is renaming
-    fields here and in the UI renderer -- not restructuring anything.
+    Person B's merged ``TraceStep`` is ``{step, query, verdict, missing}``, which
+    this matches. ``found`` is kept because the fixtures carry it and the panel
+    renders it when present; the loop does not emit it, so it is simply absent
+    on a real run and the round renders without that line.
+
+    Everything except ``step`` stays optional and extras are preserved anyway.
+    Now that the shapes agree, that permissiveness is no longer about waiting on
+    a contract -- it is so a field added mid-hackathon reaches the UI as an
+    extra instead of being rejected at the door.
     """
 
     model_config = ConfigDict(extra="allow")

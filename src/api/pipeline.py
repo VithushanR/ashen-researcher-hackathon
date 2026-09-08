@@ -15,13 +15,22 @@ Three modes, selected by ``ASHEN_PIPELINE``:
              for rehearsing the demo on a machine without the archive.
 ===========  =============================================================
 
-Where the real functions live is configurable, because Persons B and C have not
-committed theirs yet and the names may differ from our guess::
+Where the real functions live is configurable, so a teammate moving or renaming
+their entry point is a config change rather than a code change::
 
-    ASHEN_RESEARCH_TARGET=src.agent.loop:research
+    ASHEN_RESEARCH_TARGET=agent.loop:research
     ASHEN_COMPOSE_TARGET=src.answer.composer:compose_answer
 
-When their real names land, that is a config change, not a code change.
+Person B's loop has landed on main, so ``agent.loop:research`` is now a real
+module rather than a guess. Person C's composer has not, so ``auto`` still
+serves the stub -- correctly, and ``/health`` says so.
+
+Note the asymmetry in those two module paths. It is not a typo. Person B's
+modules import each other as ``from agent.state import ...``, so they only
+resolve with ``src/`` itself on ``sys.path``, and they must be addressed as
+``agent.loop``. Person C's modules use relative imports, so they resolve as
+``src.answer.composer`` from the repo root. :func:`_ensure_import_paths` puts
+both roots on the path so either style works at runtime.
 """
 
 from __future__ import annotations
@@ -33,6 +42,7 @@ import logging
 import os
 import queue
 import random
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -45,10 +55,23 @@ logger = logging.getLogger(__name__)
 
 FIXTURE_PATH = Path(__file__).resolve().parents[2] / "fixtures" / "fake_api_response.json"
 
-# Our best guess at where teammates' code will live. Overridable per the note above.
-DEFAULT_RESEARCH_TARGET = "src.agent.loop:research"
+# Where teammates' code lives. Overridable per the note above.
+#
+# research() is addressed as "agent.loop", not "src.agent.loop", on purpose.
+# Both spellings can be made to import, but they produce two *different* module
+# objects for every agent module -- so agent.state.ResearchState and
+# src.agent.state.ResearchState become distinct classes that fail isinstance
+# against each other. Person B's own tests import `agent.loop`, so that is the
+# identity we match.
+DEFAULT_RESEARCH_TARGET = "agent.loop:research"
 DEFAULT_COMPOSE_TARGET = "src.answer.composer:compose_answer"
 DEFAULT_BASELINE_TARGET = "src.retrieval.baseline:baseline_rag"
+
+# Repo root and src/. Both are needed to import Person B's agent package: the
+# modules import each other as `agent.*` (needs src/) and pull their fake
+# search from `fixtures.*` (needs the repo root).
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_SRC_ROOT = _REPO_ROOT / "src"
 
 # Seconds between stub trace steps. Fast enough not to bore a judge, slow enough
 # that the trace panel visibly fills in round by round instead of appearing whole.
@@ -66,6 +89,33 @@ def _mode() -> str:
 # ---------------------------------------------------------------------------
 # Locating the real pipeline
 # ---------------------------------------------------------------------------
+
+def _ensure_import_paths() -> None:
+    """Put the repo root and ``src/`` on ``sys.path`` before importing teammates.
+
+    This exists because of a bug that would have been invisible until the demo.
+
+    Person B's agent modules import each other as ``from agent.state import ...``
+    rather than ``from src.agent.state import ...``. That resolves under pytest,
+    because ``pytest.ini`` sets ``pythonpath = src .`` -- but ``pytest.ini`` only
+    configures the *test* process. Under ``uvicorn src.api.main:app`` from the
+    repo root, ``src/`` is not on ``sys.path``, so importing the loop raises
+    ``ModuleNotFoundError: No module named 'agent'``.
+
+    :func:`_load` swallows ImportError by design, so that failure would not have
+    crashed anything or logged anything at INFO. It would simply have served the
+    fixture stub, forever, while ``/health`` truthfully reported ``stub`` and
+    everyone assumed the real agent was wired. A green test suite and a working
+    demo, both fake. Four lines here are what make ``auto`` mean what it says.
+
+    Idempotent, and prepends rather than appends so our ``agent`` package wins
+    over any similarly-named installed distribution.
+    """
+    for root in (_REPO_ROOT, _SRC_ROOT):
+        entry = str(root)
+        if entry not in sys.path:
+            sys.path.insert(0, entry)
+
 
 def _load(target_env: str, default: str) -> Callable | None:
     """Import ``module:function`` and return it, or None if it is not there yet.
@@ -86,6 +136,7 @@ def _load(target_env: str, default: str) -> Callable | None:
         logger.warning("%s=%r is malformed; expected 'module:function'", target_env, target)
         return None
 
+    _ensure_import_paths()
     try:
         module = importlib.import_module(module_name)
         return getattr(module, attribute)
@@ -117,6 +168,13 @@ def _supports_callback(research: Callable | None) -> bool:
     That difference is reported in /health as "live" or "replayed" rather than
     papered over. Claiming a live trace we do not have is exactly the sort of
     thing a judge will ask about, and being straight about it costs nothing.
+
+    As merged, Person B's signature is ``research(question, search_fn, max_iter)``
+    -- no ``on_step`` -- so this returns False and the real path reports
+    "replayed". The request for the callback is outstanding; it is two lines in
+    loop.py (call ``on_step(step)`` after appending each TraceStep) and nothing
+    here needs to change when it lands, which is why the check is a signature
+    probe rather than a hardcoded flag.
     """
     if research is None:
         return False

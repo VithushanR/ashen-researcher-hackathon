@@ -11,7 +11,12 @@ advance -- those are called out in the test docstrings.
 
 from __future__ import annotations
 
+import inspect
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -54,12 +59,84 @@ def collect_events(client: TestClient, payload: dict) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def test_health_reports_what_is_wired(client: TestClient) -> None:
+    """ASHEN_PIPELINE=stub must report "stub" even once real components exist.
+
+    The availability flags deliberately are not asserted to specific values.
+    They describe which teammates have merged, which changes as the hackathon
+    proceeds -- pinning them here would mean every merge breaks this test for
+    no reason. What matters is that the mode override wins over availability,
+    which is the part a demo depends on.
+    """
     body = client.get("/health").json()
     assert body["status"] == "ok"
     assert body["pipeline"] == "stub"
-    assert body["research_available"] is False
-    assert body["compose_available"] is False
+    assert isinstance(body["research_available"], bool)
+    assert isinstance(body["compose_available"], bool)
     assert body["streaming"] in {"live", "replayed"}
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# Skip only when Person B's file is genuinely absent from this checkout -- i.e.
+# main has not been merged into this branch yet. This is deliberately a check on
+# the *file*, not a try/except around the import: "B has not landed here" and "B
+# landed but we cannot import them" look identical to an ImportError, and only
+# the second is a bug. Guarding on the file means the moment loop.py is present
+# these tests must pass, and can no longer skip their way to green.
+agent_loop_merged = pytest.mark.skipif(
+    not (REPO_ROOT / "src" / "agent" / "loop.py").exists(),
+    reason="src/agent/loop.py is not in this checkout; merge origin/main to run this",
+)
+
+
+@agent_loop_merged
+def test_health_sees_person_bs_merged_research_loop() -> None:
+    """The seam must actually find agent.loop:research now that it is on main.
+
+    This is the assertion that would have caught the import-path bug: _load()
+    swallows ImportError by design, so a wrong module path degrades to the stub
+    silently instead of failing. Without a test that names the real target, the
+    suite stays green while ASHEN_PIPELINE=auto quietly never leaves the stub.
+    """
+    assert pipeline.DEFAULT_RESEARCH_TARGET == "agent.loop:research"
+    research = pipeline._load("ASHEN_RESEARCH_TARGET", pipeline.DEFAULT_RESEARCH_TARGET)
+    assert research is not None, "Person B's research() is on main but not importable"
+    assert "question" in inspect.signature(research).parameters
+
+
+@agent_loop_merged
+def test_the_research_loop_is_importable_without_pytests_path_help() -> None:
+    """Reproduce the runtime environment, not the test environment.
+
+    pytest.ini's `pythonpath = src .` configures the *test* process only. Under
+    `uvicorn src.api.main:app` from the repo root, src/ is not on sys.path and
+    Person B's `from agent.state import ...` fails. That is why this runs in a
+    subprocess with a bare path and PYTHONPATH stripped: an in-process
+    assertion would pass on pytest's path and prove nothing about the demo.
+
+    _ensure_import_paths() is what makes this pass.
+    """
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    env["ASHEN_PIPELINE"] = "auto"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from src.api.pipeline import pipeline_status;"
+            " print(pipeline_status()['research_available'])",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "True", (
+        "the real research loop is not reachable the way the API actually runs; "
+        f"stderr={result.stderr}"
+    )
 
 
 def test_health_detail_reports_robustness_and_models(client: TestClient) -> None:

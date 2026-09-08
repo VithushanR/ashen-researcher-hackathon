@@ -305,7 +305,7 @@ def test_known_verdicts(verdict: str, expected: str) -> None:
 
 
 def test_an_unstyled_verdict_from_person_b_still_renders() -> None:
-    """Person B has not fixed their verdict vocabulary; the panel must not break."""
+    """A verdict we have not styled must render, not crash the trace panel."""
     assert verdict_badge("needs_more_hops")[0] == "Needs More Hops"
     assert verdict_badge(None)[0] == "Searching"
 
@@ -330,6 +330,19 @@ def test_a_capped_run_admits_the_remaining_gap() -> None:
     summary = summarise_trace([{"step": i, "verdict": "insufficient"} for i in range(1, 5)]
                               + [{"step": 5, "verdict": "capped_unresolved"}])
     assert summary == "Stopped after 5 rounds — iteration cap reached with a gap remaining."
+
+
+def test_a_run_that_ends_insufficient_admits_the_gap() -> None:
+    """The shape Person B's loop actually produces for a capped run.
+
+    check_sufficiency() only returns sufficient / insufficient /
+    conflict_detected, so a run that hits the iteration cap ends on
+    "insufficient" -- "capped_unresolved" is documented on TraceStep but never
+    emitted. Before this, the honest-partial run got the generic "N rounds
+    recorded." summary, which says nothing about why it stopped.
+    """
+    summary = summarise_trace([{"step": i, "verdict": "insufficient"} for i in range(1, 4)])
+    assert summary == "Stopped after 3 rounds — ended with a gap still open."
 
 
 def test_a_baseline_run_is_labelled_as_such() -> None:

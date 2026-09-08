@@ -39,9 +39,9 @@ citation with stale verdicts. The evaluator trusts recorded validator judgments;
 it does not independently verify passages, chunk IDs, or absence quotations
 without the production evidence context. It does not invent successful verdicts.
 Pipeline adapters must capture the actual validation results or supply explicitly
-identified offline review judgments. Conflict presentation currently bypasses
-production semantic validation, so evaluating its cited claims needs separate
-recorded assessments; missing assessments remain not evaluated.
+identified offline review judgments. Conflict citations undergo runtime semantic validation in attribution mode.
+Their actual recorded assessments are still required for evaluation; missing
+assessments remain not evaluated.
 
 ## Metrics and scoring
 
@@ -84,3 +84,39 @@ baseline/full adapters, and hand-marked Correct / Partly Correct / Wrong accurac
 Retrieval recall/precision, failure-category analysis, and measured limitations
 remain later evaluation work. Iteration counts already remain in the pipeline's
 `ComposedAnswer`; this initial summary does not aggregate retrieval/runtime data.
+
+
+## Offline visual factual accuracy
+
+Runtime vision output is evidence, never evaluation ground truth. Optional
+`EvaluationCase.visual_expectations` contains `verified_by`, `reference_notes`,
+and a nonempty `facts` list. Each fact has a unique `id`, nonempty human-approved
+`accepted_statements`, optional `forbidden_statements`, and optional
+`expected_image_filenames`. Reviewer/reference fields must be nonblank. They
+record review provenance but cannot prove that a human actually reviewed an image.
+Use complete, image-specific assertions, not bare keywords. Actual archive
+expectations must be supplied and verified by people; the test reviewer metadata
+and dog/crow examples are explicitly synthetic, not archive annotations.
+
+`visual_factual_accuracy` case-folds text and collapses whitespace. Every fact
+requires an accepted assertion as an answer substring, and any configured
+forbidden assertion fails the metric. `visual_source_citation` requires each
+configured filename to occur on a citation whose normalized claim exactly matches
+an accepted assertion for that fact. Filename comparison is exact: no path,
+chunk-ID, or model-name inference. Lists are all-required; additional citations
+are allowed. A correct filename attached only to an unrelated claim cannot pass.
+
+Without visual expectations both metrics are `not_evaluated` and excluded from
+score/pass calculation. With expectations, factual accuracy is required; source
+citation is required only when filenames are configured. A required failed or
+unevaluated visual check prevents overall success. Other missing assessments
+retain their existing fail-closed behavior. Successful legacy cases were NOT
+automatically visually evaluated. Reports expose both new metric status counts.
+
+These are deterministic literal rubric checks, not unrestricted semantic accuracy.
+Case and whitespace vary safely; paraphrases need explicit accepted alternatives.
+Negation, quotes, and contradictory prose can fool substring matching; forbidden
+assertions only catch configured errors. Unlisted facts are not evaluated, and
+filenames do not authenticate image bytes. No pixel inspection, runtime vision
+verification, provider, or model call is performed. Human review remains necessary
+for free-form answers and reference quality. The public ComposedAnswer is unchanged.

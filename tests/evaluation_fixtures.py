@@ -92,3 +92,24 @@ def representative_examples():
         (case(id="synthetic-wrong-status"), observation(answer(status="partial_gap_stated")),
          False, "answer_status"),
     ]
+
+
+DOG = "The banner depicts a dog."
+CROW = "The banner depicts a crow."
+
+
+def visual_case(**changes):
+    # Synthetic reviewer/reference stand-ins, not reviewed archive facts or images.
+    fields = dict(expected_claims=[], visual_expectations={
+        "verified_by": "SYNTHETIC TEST REVIEWER",
+        "reference_notes": "Synthetic dog reference; no actual archive image reviewed.",
+        "facts": [{"id": "banner-animal", "accepted_statements": [DOG],
+                   "forbidden_statements": [CROW],
+                   "expected_image_filenames": ["synthetic_banner.png"]}],
+    })
+    fields.update(changes)
+    return case(**fields)
+
+
+def visual_observation(text=DOG):
+    return observation(answer(answer=text, citations=[citation(text, "synthetic_banner.png")]))

@@ -13,6 +13,7 @@ METRICS = (
     "output_contract", "question_match", "answer_status", "answer_content",
     "citation_structure", "citation_coverage", "groundedness", "explicit_absence",
     "conflict_handling", "unresolved_gaps",
+    "visual_factual_accuracy", "visual_source_citation",
 )
 
 
@@ -21,7 +22,13 @@ def _metric(passed: bool, *notes: str) -> MetricResult:
 
 
 def _finish(case, metrics, errors):
-    applicable = [metric for metric in metrics.values() if metric.status != "not_applicable"]
+    excluded = set()
+    if case.visual_expectations is None:
+        excluded.update(("visual_factual_accuracy", "visual_source_citation"))
+    elif not any(f.expected_image_filenames for f in case.visual_expectations.facts):
+        excluded.add("visual_source_citation")
+    applicable = [metric for name, metric in metrics.items()
+                  if name not in excluded and metric.status != "not_applicable"]
     successes = sum(metric.status == "pass" for metric in applicable)
     return EvaluationResult(
         case_id=case.id, data_origin=case.data_origin,
@@ -31,6 +38,40 @@ def _finish(case, metrics, errors):
         notes=["Text expectations are literal regression checks, not semantic accuracy judgments."]
         + ([case.notes] if case.notes else []),
     )
+
+
+def _normalize(text: str) -> str:
+    return " ".join(text.casefold().split())
+
+
+def evaluate_visual_expectations(expectations, answer: ComposedAnswer):
+    """Literal reference checks only: no pixels, evidence text, or model calls."""
+    if expectations is None:
+        return {name: MetricResult(status="not_evaluated", notes=[
+            "No human-verified visual rubric supplied; excluded from scoring."])
+            for name in ("visual_factual_accuracy", "visual_source_citation")}
+    text = _normalize(answer.answer)
+    fact_errors, source_errors = [], []
+    for fact in expectations.facts:
+        accepted = {_normalize(statement) for statement in fact.accepted_statements}
+        if not any(statement in text for statement in accepted):
+            fact_errors.append(f"{fact.id}: missing accepted visual assertion.")
+        for forbidden in fact.forbidden_statements:
+            if _normalize(forbidden) in text:
+                fact_errors.append(f"{fact.id}: forbidden assertion: {forbidden}")
+        # Exact normalized claim association prevents unrelated citations from counting.
+        filenames = {citation["filename"] for citation in answer.citations
+                     if _normalize(citation["claim"]) in accepted}
+        for filename in fact.expected_image_filenames:
+            if filename not in filenames:
+                source_errors.append(f"{fact.id}: missing associated image citation: {filename}")
+    source_required = any(f.expected_image_filenames for f in expectations.facts)
+    return {
+        "visual_factual_accuracy": _metric(not fact_errors, *fact_errors),
+        "visual_source_citation": (_metric(not source_errors, *source_errors) if source_required
+            else MetricResult(status="not_evaluated", notes=[
+                "No image filenames required; excluded from scoring."])),
+    }
 
 
 def evaluate_answer(case: EvaluationCase, observation: EvaluationObservation) -> EvaluationResult:
@@ -54,6 +95,7 @@ def evaluate_answer(case: EvaluationCase, observation: EvaluationObservation) ->
 
     metrics["output_contract"] = _metric(True)
     metrics["citation_structure"] = _metric(True)
+    metrics.update(evaluate_visual_expectations(case.visual_expectations, answer))
     metrics["question_match"] = _metric(answer.question == case.question)
     metrics["answer_status"] = _metric(answer.status == case.expected_status,
                                         f"Expected {case.expected_status}; received {answer.status}.")

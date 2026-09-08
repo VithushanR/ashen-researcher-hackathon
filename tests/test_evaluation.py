@@ -4,6 +4,7 @@ import json
 from copy import deepcopy
 
 import pytest
+from pydantic import ValidationError
 
 from evaluation.models import EvaluationObservation
 from evaluation.run_eval import run_evaluation
@@ -11,7 +12,8 @@ from evaluation.scoring import evaluate_answer
 from src.answer.coverage_validation import CoverageVerdict
 from src.answer.semantic_validation import SemanticVerdict
 from tests.evaluation_fixtures import (
-    ABSENCE, FACT, GAP, answer, case, citation, conflict_example, observation, representative_examples,
+    ABSENCE, FACT, GAP, DOG, CROW, answer, case, citation, conflict_example, observation,
+    representative_examples, visual_case, visual_observation,
 )
 
 
@@ -183,3 +185,126 @@ def test_scoring_does_not_mutate_case_or_observation():
     before = deepcopy((reference, record))
     evaluate_answer(reference, record)
     assert (reference, record) == before
+
+
+@pytest.mark.parametrize("text,passed", [(DOG, True), (CROW, False)])
+def test_visual_dog_reference_is_independent_of_positive_runtime_judgments(text, passed):
+    result = evaluate_answer(visual_case(), visual_observation(text))
+    assert result.metrics["groundedness"].status == "pass"
+    assert result.metrics["citation_coverage"].status == "pass"
+    assert result.metrics["citation_structure"].status == "pass"
+    assert result.metrics["visual_factual_accuracy"].status == ("pass" if passed else "fail")
+    assert result.metrics["visual_source_citation"].status == ("pass" if passed else "fail")
+    assert result.passed is passed
+
+
+@pytest.mark.parametrize("text", ["No animal is described.", DOG + " " + CROW])
+def test_missing_or_forbidden_visual_fact_fails(text):
+    result = evaluate_answer(visual_case(), visual_observation(text))
+    assert result.metrics["visual_factual_accuracy"].status == "fail"
+    assert not result.passed
+
+
+@pytest.mark.parametrize("citations", [[], [citation(DOG, "wrong.png")],
+    [citation("An unrelated event.", "synthetic_banner.png")],
+    [citation(DOG, "folder/synthetic_banner.png")]])
+def test_visual_filename_requires_exact_original_and_associated_claim(citations):
+    result = evaluate_answer(visual_case(), observation(answer(answer=DOG, citations=citations)))
+    assert result.metrics["visual_factual_accuracy"].status == "pass"
+    assert result.metrics["visual_source_citation"].status == "fail"
+    assert not result.passed
+
+
+def test_visual_normalization_alternatives_and_mixed_text():
+    reference = visual_case()
+    reference.visual_expectations.facts[0].accepted_statements.append("A dog appears on the banner.")
+    text = "A DOG   appears on the\nbanner."
+    record = observation(answer(answer=FACT + " " + text,
+        citations=[citation(), citation(text, "synthetic_banner.png")]))
+    assert evaluate_answer(reference, record).passed
+
+
+@pytest.mark.parametrize("swapped", [False, True])
+def test_multiple_images_and_swapped_citations(swapped):
+    reference = visual_case()
+    fact_type = type(reference.visual_expectations.facts[0])
+    second = "The second banner depicts a horse."
+    reference.visual_expectations.facts.append(fact_type(id="second",
+        accepted_statements=[second], expected_image_filenames=["second.png"]))
+    files = ["synthetic_banner.png", "second.png"]
+    if swapped:
+        files.reverse()
+    record = observation(answer(answer=DOG + " " + second,
+        citations=[citation(DOG, files[0]), citation(second, files[1])]))
+    result = evaluate_answer(reference, record)
+    assert result.metrics["visual_factual_accuracy"].status == "pass"
+    assert result.passed is not swapped
+
+
+def test_all_configured_image_filenames_required_but_extra_citations_allowed():
+    reference = visual_case()
+    reference.visual_expectations.facts[0].expected_image_filenames.append("second.png")
+    assert not evaluate_answer(reference, visual_observation()).passed
+    record = observation(answer(answer=DOG, citations=[citation(DOG, name) for name in
+        ["synthetic_banner.png", "second.png", "additional.png"]]))
+    assert evaluate_answer(reference, record).passed
+
+
+def test_optional_visual_metrics_preserve_legacy_score_and_outcome():
+    for reference, record, passed, _ in representative_examples():
+        result = evaluate_answer(reference, record)
+        legacy = [m for name, m in result.metrics.items()
+                  if not name.startswith("visual_") and m.status != "not_applicable"]
+        assert result.score == sum(m.status == "pass" for m in legacy) / len(legacy)
+        assert result.passed is passed
+        assert result.metrics["visual_factual_accuracy"].status == "not_evaluated"
+        assert result.metrics["visual_source_citation"].status == "not_evaluated"
+
+
+def test_no_filename_requirement_excludes_only_source_metric():
+    reference = visual_case()
+    reference.visual_expectations.facts[0].expected_image_filenames = []
+    result = evaluate_answer(reference, visual_observation())
+    assert result.passed and result.score == 1.0
+    assert result.metrics["visual_source_citation"].status == "not_evaluated"
+    assert not evaluate_answer(reference, EvaluationObservation(output=answer(answer=DOG))).passed
+
+
+def test_configured_visual_metric_without_valid_output_cannot_pass():
+    result = evaluate_answer(visual_case(), EvaluationObservation())
+    assert result.metrics["visual_factual_accuracy"].status == "not_evaluated"
+    assert result.metrics["visual_source_citation"].status == "not_evaluated"
+    assert not result.passed
+
+
+@pytest.mark.parametrize("change", ["reviewer", "notes", "facts", "id", "accepted",
+    "blank_accepted", "blank_forbidden", "blank_filename", "duplicate", "missing_reviewer"])
+def test_invalid_visual_expectations_rejected(change):
+    raw = visual_case().model_dump()
+    visual = raw["visual_expectations"]
+    fact = visual["facts"][0]
+    if change == "reviewer": visual["verified_by"] = " "
+    elif change == "notes": visual["reference_notes"] = ""
+    elif change == "facts": visual["facts"] = []
+    elif change == "id": fact["id"] = ""
+    elif change == "accepted": fact["accepted_statements"] = []
+    elif change == "blank_accepted": fact["accepted_statements"] = [" "]
+    elif change == "blank_forbidden": fact["forbidden_statements"] = [" "]
+    elif change == "blank_filename": fact["expected_image_filenames"] = [" "]
+    elif change == "duplicate": visual["facts"].append(deepcopy(fact))
+    else: del visual["verified_by"]
+    with pytest.raises(ValidationError):
+        type(visual_case()).model_validate(raw)
+
+
+def test_visual_report_json_counts_and_no_mutation():
+    references = [visual_case(id="dog"), visual_case(id="crow")]
+    records = [visual_observation(), visual_observation(CROW)]
+    before = deepcopy((references, records))
+    iterator = iter(records)
+    report = run_evaluation(references, lambda question: next(iterator), pipeline_name="synthetic")
+    assert report.summary.passed == report.summary.failed == 1
+    assert report.summary.metric_counts["visual_factual_accuracy"]["pass"] == 1
+    assert report.summary.metric_counts["visual_factual_accuracy"]["fail"] == 1
+    assert json.loads(report.model_dump_json())["summary"]["pass_rate"] == 0.5
+    assert (references, records) == before

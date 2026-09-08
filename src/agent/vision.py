@@ -22,7 +22,8 @@ import os
 import time
 from pathlib import Path
 
-_VISION_MODEL = "openai/gpt-4o-mini"  # vision-capable; confirm current OpenRouter id before relying on this
+from agent.models import VISION_MODEL
+
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 _MAX_RETRIES = 4
@@ -74,7 +75,7 @@ def describe_image(filename: str, question: str) -> str:
     b64 = _encode_image(image_path)
 
     payload = {
-        "model": _VISION_MODEL,
+        "model": VISION_MODEL,
         "messages": [
             {
                 "role": "user",

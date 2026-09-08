@@ -1,16 +1,3 @@
-fastapi
-uvicorn
-streamlit
-chromadb
-rank_bm25
-voyageai
-pymupdf
-pdfplumber
-python-docx
-pytesseract
-tenacity
-diskcache
-python-dotenv
-pydantic
-pytest
-sentence-transformers
+pydantic>=2.0
+requests>=2.31             # OpenRouter transport (llm_client.py, vision.py)
+pytest>=8.0

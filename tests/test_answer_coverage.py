@@ -8,7 +8,13 @@ import pytest
 from pydantic import ValidationError
 
 from src.answer.composer import compose_answer
-from src.answer.coverage_validation import CitationCoverageError, CoverageVerdict
+from src.answer.coverage_validation import (
+    CitationCoverageError,
+    CoverageVerdict,
+    PresentationAssessment,
+    PresentationCoverageVerdict,
+    _COVERAGE_OUTPUT_EXAMPLE,
+)
 from tests.answer_helpers import complete_coverage, supported_semantics
 from tests.test_answer_composer import evidence, state
 from tests.test_answer_conflicts import conflict, research
@@ -30,6 +36,84 @@ def input_state(**overrides):
 
 def data(prompt):
     return json.loads(prompt.split("INPUT DATA:\n", 1)[1])
+
+
+def production_coverage(prompt, coverage="complete", uncovered_claims=None, reason=None):
+    """Return the complete runtime response shape, including optional fields."""
+    payload = data(prompt)
+    requirements = payload["required_claims"] or [payload["question"]]
+    return {
+        "coverage": coverage,
+        "uncovered_claims": uncovered_claims or [],
+        "reason": reason,
+        "presentation": [{
+            "requirement": requirement,
+            "status": "answered",
+            "answer_excerpt": payload["ordinary_answer"] or payload["answer"],
+            "evidence_ids": [],
+            "citation_claim_indices": list(range(len(payload["citation_claims"]))),
+            "gap_indices": [],
+            "conflict_indices": [],
+            "limitation_indices": [],
+        } for requirement in requirements],
+    }
+
+
+def test_prompt_has_one_complete_output_object_matching_authoritative_models():
+    assert set(_COVERAGE_OUTPUT_EXAMPLE) == set(PresentationCoverageVerdict.model_fields)
+    assert set(_COVERAGE_OUTPUT_EXAMPLE["presentation"][0]) == set(PresentationAssessment.model_fields)
+    PresentationCoverageVerdict.model_validate(_COVERAGE_OUTPUT_EXAMPLE)
+
+    captured = Mock(side_effect=production_coverage)
+    result = compose_answer(
+        input_state(required_claims=["Describe Hesper's interrogation behavior."]),
+        synthesize=Mock(return_value=output()), validate_coverage=captured,
+        validate_semantics=supported_semantics,
+    )
+    prompt = captured.call_args.args[0]
+    assert json.dumps(_COVERAGE_OUTPUT_EXAMPLE, ensure_ascii=False, indent=2) in prompt
+    assert "Return one JSON object only" in prompt
+    assert "Do not echo question, required_claims, evidence,\nconflicts, or unresolved_claims" in prompt
+    assert result.status == "complete"
+
+
+@pytest.mark.parametrize("echoed", [
+    "required_claims", "question", "evidence", "conflicts", "unresolved_claims",
+])
+def test_echoed_input_fields_are_rejected_without_silent_removal(echoed):
+    semantics = Mock()
+
+    def coverage(prompt):
+        payload = data(prompt)
+        response = production_coverage(prompt)
+        response[echoed] = (payload["research_context"][echoed]
+                            if echoed in {"conflicts", "unresolved_claims"} else payload[echoed])
+        return response
+
+    with pytest.raises(ValidationError, match=echoed):
+        compose_answer(input_state(required_claims=["Interrogation behavior?"]),
+                       synthesize=Mock(return_value=output()), validate_coverage=coverage,
+                       validate_semantics=semantics)
+    semantics.assert_not_called()
+
+
+@pytest.mark.parametrize("scope,missing", [
+    ("verdict", "coverage"), ("verdict", "presentation"),
+    ("assessment", "requirement"), ("assessment", "status"),
+])
+def test_every_required_output_field_is_enforced(scope, missing):
+    semantics = Mock()
+
+    def coverage(prompt):
+        response = production_coverage(prompt)
+        target = response if scope == "verdict" else response["presentation"][0]
+        del target[missing]
+        return response
+
+    with pytest.raises(ValidationError):
+        compose_answer(input_state(), synthesize=Mock(return_value=output()),
+                       validate_coverage=coverage, validate_semantics=semantics)
+    semantics.assert_not_called()
 
 
 def test_complete_coverage_receives_answer_and_claims_before_semantics():
@@ -76,7 +160,8 @@ def test_omitted_sentence_or_extra_clause_rejects_answer_without_rewriting(answe
         assert payload["citation_claims"] == output()["citation_claims"]
         assert "multiple ideas in a\nsingle sentence or conjunction" in prompt
         assert "simple word overlap does not" in prompt
-        return {"coverage": "incomplete", "uncovered_claims": ["Hesper had a guarded personality."]}
+        return production_coverage(
+            prompt, "incomplete", ["Hesper had a guarded personality."])
 
     with pytest.raises(CitationCoverageError) as error:
         compose_answer(input_state(), synthesize=Mock(return_value=synthesized),
@@ -90,7 +175,7 @@ def test_omitted_sentence_or_extra_clause_rejects_answer_without_rewriting(answe
 def test_zero_declared_claims_with_factual_answer_cannot_bypass_gate():
     # Partial synthesis permits zero claims structurally; coverage must still run.
     semantics = Mock()
-    coverage = Mock(return_value={"coverage": "incomplete", "uncovered_claims": [EVENT]})
+    coverage = Mock(side_effect=lambda prompt: production_coverage(prompt, "incomplete", [EVENT]))
     with pytest.raises(CitationCoverageError):
         compose_answer(input_state(unresolved_claims=["Unknown date."]),
                        synthesize=Mock(return_value=output(claims=[])),
@@ -161,7 +246,7 @@ def test_malformed_coverage_fails_before_semantic_validation(verdict):
 def test_uncertain_coverage_fails_safely():
     with pytest.raises(CitationCoverageError):
         compose_answer(input_state(), synthesize=Mock(return_value=output()),
-                       validate_coverage=Mock(return_value={"coverage": "uncertain"}))
+                       validate_coverage=lambda prompt: production_coverage(prompt, "uncertain"))
 
 
 def test_missing_coverage_adapter_is_not_a_bypass():
@@ -239,4 +324,4 @@ def test_conflict_report_cannot_bypass_missing_or_failing_coverage():
         compose_answer(research(conflict()), synthesize=Mock(return_value={"answer": None, "citation_claims": []}))
     with pytest.raises(CitationCoverageError):
         compose_answer(research(conflict()), synthesize=Mock(return_value={"answer": None, "citation_claims": []}),
-                       validate_coverage=Mock(return_value={"coverage": "uncertain"}))
+                       validate_coverage=lambda prompt: production_coverage(prompt, "uncertain"))

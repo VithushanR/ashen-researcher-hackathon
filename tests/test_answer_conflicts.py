@@ -224,7 +224,11 @@ def test_conflict_semantic_exception_propagates():
 @pytest.mark.parametrize("failure", ["unknown", "duplicate", "coverage"])
 def test_conflict_prechecks_prevent_semantic_calls(failure):
     input_state = research(conflict())
-    coverage = Mock(return_value={"coverage": "incomplete" if failure == "coverage" else "complete"})
+    def coverage_result(prompt):
+        result = complete_coverage(prompt)
+        result["coverage"] = "incomplete" if failure == "coverage" else "complete"
+        return result
+    coverage = Mock(side_effect=coverage_result)
     if failure == "unknown":
         input_state.conflicts[0].claims[-1].chunk_id = "invented"
     elif failure == "duplicate":
@@ -350,7 +354,9 @@ def test_ordinary_overlap_or_repeated_gap_rejects_before_semantics(claim):
         assert "ordinary_section" in prompt
         assert "must not excuse disputed assertions in ordinary_section" in prompt
         assert "must not repeat B's gap report" in prompt
-        return {"coverage": "incomplete", "reason": "Ordinary section violates separation."}
+        result = complete_coverage(prompt)
+        result.update(coverage="incomplete", reason="Ordinary section violates separation.")
+        return result
 
     with pytest.raises(CitationCoverageError):
         compose_answer(input_state, synthesize=Mock(return_value={"answer": claim,

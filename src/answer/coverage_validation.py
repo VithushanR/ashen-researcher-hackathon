@@ -65,6 +65,23 @@ class PresentationCoverageVerdict(CoverageVerdict):
     presentation: list[PresentationAssessment] = Field(min_length=1)
 
 
+_COVERAGE_OUTPUT_EXAMPLE = {
+    "coverage": "complete",
+    "uncovered_claims": [],
+    "reason": None,
+    "presentation": [{
+        "requirement": "exact supplied requirement or fallback question",
+        "status": "answered",
+        "answer_excerpt": "exact nonempty substring of the final answer",
+        "evidence_ids": [],
+        "citation_claim_indices": [0],
+        "gap_indices": [],
+        "conflict_indices": [],
+        "limitation_indices": [],
+    }],
+}
+
+
 class CitationCoverageError(ValueError):
     """The original answer is rejected without deleting or rewriting its text."""
 
@@ -145,10 +162,9 @@ Return incomplete for any uncovered factual idea, uncertain if coverage cannot
 be determined, and complete only when all factual ideas are covered as above.
 This is coverage, not a support check: do not look up chunk IDs, judge the truth
 of declared claims, invent evidence, rewrite the answer, or delete text.
-Return structured JSON only, with these base fields AND presentation below:
-{"coverage": "complete|incomplete|uncertain", "uncovered_claims": [], "reason": null}
-uncovered_claims is an optional list of strings naming omitted factual ideas.
-reason is an optional string or null. Complete must have no uncovered claims.
+coverage must be complete, incomplete, or uncertain. uncovered_claims is a list
+of strings naming uncovered factual ideas. reason is a string or null. Complete
+must have no uncovered claims.
 
 INPUT DATA:
 """
@@ -170,12 +186,9 @@ INPUT DATA:
 Check every required_claims item in original order, exactly once. If empty, return
 one assessment with requirement equal to the original question, checking ALL its
 parts without generating a second checklist. This is presentation, NOT sufficiency.
-Return a required presentation array in addition to coverage/uncovered_claims/reason:
-[{"requirement": "exact supplied requirement or fallback question",
-  "status": "answered|gap|conflict|omitted|uncertain",
-  "answer_excerpt": "exact nonempty substring of final answer or null",
-  "evidence_ids": [], "citation_claim_indices": [],
-  "gap_indices": [], "conflict_indices": []}].
+Return a required presentation assessment for every expected requirement.
+Its status must be answered, gap, conflict, omitted, uncertain, or
+validation_limited. The other presentation fields are described below.
 For a populated checklist, answered MUST give zero-based citation_claim_indices
 into existing citation_claims, restricted to the ordinary synthesis claims (the
 ordinary_section prefix when conflicts exist). Include the referenced atomic
@@ -246,18 +259,29 @@ INPUT DATA:
 """)
         payload["research_context"]["validation_limitations"] = [asdict(item) for item in validation_limitations]
         payload["preserved_requirement_claims"] = preserved_requirement_claims
+    instructions = instructions.replace("INPUT DATA:\n", """OUTPUT CONTRACT:
+Return one JSON object only. Return ONLY the documented output keys shown in the
+complete example below. Do not echo question, required_claims, evidence,
+conflicts, or unresolved_claims. Do not include Markdown, prose, explanations,
+or any text outside the JSON object.
+
+""" + json.dumps(_COVERAGE_OUTPUT_EXAMPLE, ensure_ascii=False, indent=2) + """
+
+Every presentation object must use exactly the fields shown. Populate arrays
+according to the status rules above; use empty arrays when a reference type does
+not apply. Use null for an absent answer_excerpt or reason.
+
+INPUT DATA:
+""")
     prompt = instructions + json.dumps(payload, ensure_ascii=False)
     raw = validate_coverage(prompt)
-    if isinstance(raw, CoverageVerdict):
+    if isinstance(raw, PresentationCoverageVerdict):
         raw = raw.model_dump()
-    # Reject existing coverage failures before considering any repair.
-    # The extended schema is mandatory even with an empty B checklist.
-    base_data = ({key: value for key, value in raw.items() if key != "presentation"}
-                 if isinstance(raw, dict) else raw)
-    base = CoverageVerdict.model_validate(base_data)
-    if base.coverage != "complete":
-        raise CitationCoverageError(answer, base)
+    # One strict runtime schema is authoritative for every coverage outcome.
+    # Missing presentation data and echoed input fields therefore fail closed.
     verdict = PresentationCoverageVerdict.model_validate(raw)
+    if verdict.coverage != "complete":
+        raise CitationCoverageError(answer, verdict)
     expected = required_claims or [question]
     if [item.requirement for item in verdict.presentation] != expected:
         raise ValueError("Presentation assessments must match the full checklist in order")

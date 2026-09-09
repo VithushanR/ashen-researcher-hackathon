@@ -54,7 +54,8 @@ def test_provider_error_propagates(shared_call, adapter):
 
 def test_real_state_through_api_adapters_and_composer(shared_call):
     fact = "The synthetic gate is iron."
-    state = ResearchState(question="What is the synthetic gate made of?",
+    question = "What is the synthetic gate made of?"
+    state = ResearchState(question=question, required_claims=[question],
         confidence=85, iteration=2, evidence=[Evidence(
             chunk_id="synthetic-1", filename="synthetic.md", source_type="wiki",
             reliability="T2_curated", text=fact, content_type="text", page=None,
@@ -63,8 +64,10 @@ def test_real_state_through_api_adapters_and_composer(shared_call):
     shared_call.side_effect = [
         json.dumps({"answer": fact, "citation_claims": [
             {"claim": fact, "chunk_id": "synthetic-1"}]}),
-        json.dumps({"coverage": "complete", "presentation": [{
-            "requirement": state.question, "status": "answered", "answer_excerpt": fact}]}),
+        json.dumps({"coverage": "complete", "uncovered_claims": [], "reason": None,
+            "presentation": [{"requirement": state.question, "status": "answered",
+                "answer_excerpt": fact, "evidence_ids": [], "citation_claim_indices": [0],
+                "gap_indices": [], "conflict_indices": [], "limitation_indices": []}]}),
         json.dumps({"support": "supported", "explicit_absence": "clear"}),
     ]
     answer = pipeline._compose_with_adapters(compose_answer, state)
@@ -77,6 +80,13 @@ def test_real_state_through_api_adapters_and_composer(shared_call):
     assert [call.kwargs["model"] for call in shared_call.call_args_list] == [
         llm.SYNTHESIS_MODEL, llm.FAST_MODEL, llm.FAST_MODEL]
     assert state.model_dump() == before
+
+
+def test_coverage_adapter_does_not_remove_unknown_output_fields(shared_call):
+    raw = {"coverage": "complete", "presentation": [], "required_claims": ["Echoed input"]}
+    shared_call.side_effect = None
+    shared_call.return_value = json.dumps(raw)
+    assert llm.validate_coverage("prompt") == raw
 
 
 @pytest.mark.parametrize("override", [False, True])

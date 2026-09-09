@@ -29,11 +29,44 @@ _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 _MAX_RETRIES = 4
 _BACKOFF_SECONDS = [1, 2, 4, 8]  # exponential backoff, per spec §2.13
 
-# Where standalone image files live, so a bare filename from an image
-# chunk can be resolved to an actual file to send. Person A's ingestion
-# owns this directory; confirm the real path with them before relying on
-# it. Overridable via env so it isn't hardcoded to one machine.
-_IMAGE_DIR = Path(os.environ.get("ASHEN_IMAGE_DIR", "corpus/images"))
+# Same archive-root env vars build_corpus.py resolves against (ASHEN_ARCHIVE_ROOT
+# preferred, CORPUS_PATH as the pre-existing fallback) -- one shared root rather
+# than a second, independently-named var that can drift from ingestion's.
+def _archive_root() -> Path | None:
+    root = os.environ.get("ASHEN_ARCHIVE_ROOT") or os.environ.get("CORPUS_PATH")
+    return Path(root) if root else None
+
+
+# Ingestion writes standalone images under three separate folders, not one --
+# see build_corpus.py's images/, wiki/ and codex/ passes. A bare filename from
+# an image chunk does not say which, so each candidate is checked in turn.
+_IMAGE_SUBDIRS = ("images", "wiki/images", "codex/images")
+
+
+def _resolve_image_path(filename: str) -> Path:
+    """Find the real file behind an image chunk's bare filename.
+
+    Raises FileNotFoundError if it isn't in any of the three known locations
+    (a broken index is a real problem, not something to paper over with an
+    empty description that would silently mislead the loop).
+    """
+    root = _archive_root()
+    if root is None:
+        raise FileNotFoundError(
+            f"Image chunk referenced {filename!r} but neither ASHEN_ARCHIVE_ROOT "
+            "nor CORPUS_PATH is set, so no archive root is known."
+        )
+
+    candidates = [root / subdir / filename for subdir in _IMAGE_SUBDIRS]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    raise FileNotFoundError(
+        f"Image chunk referenced {filename!r} but no file was found in any of: "
+        f"{', '.join(str(c) for c in candidates)}. Check ASHEN_ARCHIVE_ROOT/"
+        "CORPUS_PATH and Person A's ingestion output."
+    )
 
 
 def _encode_image(path: Path) -> str:
@@ -48,21 +81,18 @@ def describe_image(filename: str, question: str) -> str:
     its textual description, to be fed back into the loop as evidence.
 
     `filename` is the bare filename from the image chunk; it's resolved
-    against _IMAGE_DIR. Raises FileNotFoundError if the file isn't there
-    (a broken index is a real problem, not something to paper over with
-    an empty description that would silently mislead the loop).
+    against the archive's images/, wiki/images/ and codex/images/ folders in
+    turn (see _resolve_image_path). Raises FileNotFoundError if the file
+    isn't in any of them (a broken index is a real problem, not something to
+    paper over with an empty description that would silently mislead the
+    loop).
 
     Retries with exponential backoff; raises RuntimeError if every
     attempt fails, rather than returning "" — a silent empty description
     would be indistinguishable from "the image shows nothing relevant"
     and would corrupt the loop's reasoning.
     """
-    image_path = _IMAGE_DIR / filename
-    if not image_path.exists():
-        raise FileNotFoundError(
-            f"Image chunk referenced {filename!r} but no file found at {image_path}. "
-            f"Check ASHEN_IMAGE_DIR and Person A's ingestion output."
-        )
+    image_path = _resolve_image_path(filename)
 
     prompt = (
         "You are examining a single image from a fantasy lore archive. "

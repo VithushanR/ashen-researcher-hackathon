@@ -14,6 +14,10 @@ system can print an answer; this one shows the judge the moment it decided it
 did not have enough evidence and searched again. That is the whole claim of
 sub-track 1C, made visible.
 
+Layout is a single centered conversation column (question in, everything else
+below it) rather than a wide dashboard -- the trace is a quiet, secondary
+"process" detail; the answer is the main event.
+
 Run it (with the API already running on port 8000):
 
     streamlit run src/ui/app.py
@@ -60,51 +64,193 @@ SAMPLE_QUESTIONS = [
 
 st.set_page_config(
     page_title="Ashen Researcher",
-    page_icon="🕯️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# Colours use alpha-blended backgrounds against currentColor text so the page
-# stays legible in both Streamlit themes without a second palette.
+# Results live in session state so a rerun -- clicking "Open source file",
+# expanding a citation -- re-renders the conversation instead of losing it.
+st.session_state.setdefault("steps", [])
+st.session_state.setdefault("result", None)
+st.session_state.setdefault("error", None)
+st.session_state.setdefault("asked", None)
+
+# Palette: strict 60/30/10. 60% a warm near-black ink canvas, 30% a warm dark
+# graphite for elevated surfaces (cards/panels/inputs), 10% a single antique-gold
+# accent reserved for the primary CTA, active states, and the one number in the
+# whole page that matters most (confidence). Every other colour on screen is a
+# tint of ink/graphite/parchment text, never a fourth hue -- that restraint is
+# what reads as premium rather than decorated. Defined once as CSS custom
+# properties; render.py's badge palettes are hand-kept in the same family since
+# that file intentionally has no Streamlit/CSS access of its own.
+#
+# Hex values here are mirrored in .streamlit/config.toml for Streamlit's native
+# widgets (buttons, inputs, slider, sidebar chrome) -- keep the two in sync.
 st.markdown(
     """
     <style>
-      .block-container { padding-top: 2.2rem; max-width: 1180px; }
-      .ashen-title { font-size: 2.1rem; font-weight: 700; letter-spacing: -0.02em;
-                     margin-bottom: 0.1rem; }
-      .ashen-sub { opacity: 0.65; font-size: 0.95rem; margin-bottom: 1.4rem; font-style: italic; }
-      .ashen-card {
-        border: 1px solid rgba(128,128,128,0.25); border-radius: 10px;
-        padding: 0.85rem 1rem; margin-bottom: 0.6rem;
-        background: rgba(128,128,128,0.06);
+      @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap');
+
+      :root {
+        --ashen-bg: #15120f;            /* 60% dominant -- ink canvas */
+        --ashen-surface: #221d18;       /* 30% secondary -- elevated panel */
+        --ashen-surface-2: #2b241d;     /* nested surface, one step lighter */
+        --ashen-accent: #c9a15a;        /* 10% accent -- antique gold */
+        --ashen-accent-soft: rgba(201, 161, 90, 0.14);
+        --ashen-accent-border: rgba(201, 161, 90, 0.45);
+        --ashen-text: #ece7dd;          /* parchment white */
+        --ashen-text-muted: #a99d8c;    /* muted warm grey */
+        --ashen-text-faint: #7d7365;
+        --ashen-border: rgba(236, 231, 221, 0.10);
+        --ashen-serif: 'Fraunces', Georgia, serif;
+        --ashen-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
       }
-      .ashen-step-head { display: flex; align-items: center; gap: 0.6rem;
-                         margin-bottom: 0.45rem; flex-wrap: wrap; }
-      .ashen-round { font-size: 0.7rem; font-weight: 700; opacity: 0.55;
-                     letter-spacing: 0.09em; }
+
+      html, body, [class*="css"] { font-family: var(--ashen-sans); }
+      .stApp { background: var(--ashen-bg); color: var(--ashen-text); }
+
+      /* A centered conversation column, ChatGPT-width, not a wide dashboard. */
+      .block-container { padding-bottom: 4rem; max-width: 720px; }
+
+      section[data-testid="stSidebar"] {
+        background: var(--ashen-surface); border-right: 1px solid var(--ashen-border);
+      }
+      section[data-testid="stSidebar"] .block-container { padding-top: 2rem; max-width: none; }
+
+      /* ---- Type scale ---------------------------------------------------- */
+      h1, h2, h3, h4, .ashen-title { font-family: var(--ashen-serif); font-weight: 600;
+                                      color: var(--ashen-text); letter-spacing: -0.01em; }
+      .stMarkdown h3, .stMarkdown h4 {
+        font-family: var(--ashen-serif); font-weight: 600; margin-top: 0.4rem;
+      }
+      .ashen-title { font-weight: 700; letter-spacing: -0.02em; margin-bottom: 0.15rem; }
+      .ashen-sub { color: var(--ashen-text-muted); font-family: var(--ashen-serif);
+                   font-style: italic; font-size: 1.05rem; margin-bottom: 1.6rem; }
+
+      /* Small uppercase label for secondary section headers -- Process,
+         Sources disagreed, Evidence -- kept deliberately quiet next to the
+         serif answer prose so nothing competes with the main event. */
+      .ashen-eyebrow { font-family: var(--ashen-sans); font-size: 0.72rem; font-weight: 700;
+                        letter-spacing: 0.12em; text-transform: uppercase;
+                        color: var(--ashen-text-faint); margin: 1.6rem 0 0.7rem; }
+
+      /* The user's own question, echoed above the answer like a chat turn --
+         understated, never competing with the assistant's response below it. */
+      .ashen-user-turn { color: var(--ashen-text-muted); font-size: 0.95rem;
+                          line-height: 1.5; margin: 1.8rem 0 0.9rem;
+                          padding-left: 0.8rem; border-left: 2px solid var(--ashen-border); }
+
+      /* ---- Question input: the singular focal point ---------------------- */
+      div[data-testid="stTextArea"] textarea {
+        background: var(--ashen-surface); border: 1px solid var(--ashen-border);
+        border-radius: 12px; color: var(--ashen-text); font-family: var(--ashen-serif);
+        font-size: 1.15rem; padding: 1rem 1.1rem; line-height: 1.5;
+      }
+      div[data-testid="stTextArea"] textarea:focus {
+        border-color: var(--ashen-accent-border);
+        box-shadow: 0 0 0 3px var(--ashen-accent-soft);
+      }
+
+      /* Primary CTA is the one place, besides confidence, the accent fills a
+         surface rather than just tinting one -- its rarity is the point. */
+      div[data-testid="stButton"] button[kind="primary"] {
+        background: var(--ashen-accent); border: none; color: #1a140a;
+        font-weight: 700; font-family: var(--ashen-sans); border-radius: 8px;
+        padding: 0.6rem 1.8rem; letter-spacing: 0.01em;
+      }
+      div[data-testid="stButton"] button[kind="primary"]:hover {
+        background: #d6ae68; box-shadow: 0 4px 14px rgba(201, 161, 90, 0.25);
+      }
+      div[data-testid="stButton"] button[kind="primary"]:disabled {
+        background: var(--ashen-surface-2); color: var(--ashen-text-faint);
+      }
+      div[data-testid="stButton"] button:not([kind="primary"]) {
+        background: var(--ashen-surface-2); border: 1px solid var(--ashen-border);
+        color: var(--ashen-text); border-radius: 8px; text-align: left;
+      }
+
+      /* Sidebar sample-question buttons read as a clean list, not a button grid. */
+      section[data-testid="stSidebar"] div[data-testid="stButton"] button {
+        background: transparent; border: none; padding: 0.25rem 0;
+        color: var(--ashen-text); font-size: 0.88rem; font-weight: 500;
+      }
+      section[data-testid="stSidebar"] div[data-testid="stButton"] button:hover {
+        color: var(--ashen-accent);
+      }
+      section[data-testid="stSidebar"] .ashen-eyebrow { margin-top: 0.2rem; }
+
+      /* ---- Trace / process panel: compact, secondary, deliberately quiet - */
+      .ashen-card {
+        border: 1px solid var(--ashen-border); border-radius: 8px;
+        padding: 0.6rem 0.85rem; margin-bottom: 0.4rem;
+        background: var(--ashen-surface); font-size: 0.85rem;
+      }
+      .ashen-step-head { display: flex; align-items: center; gap: 0.55rem;
+                         margin-bottom: 0.3rem; flex-wrap: wrap; }
+      .ashen-round { font-size: 0.64rem; font-weight: 700; color: var(--ashen-text-faint);
+                     letter-spacing: 0.1em; }
       .ashen-query { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-                     font-size: 0.9rem; }
-      .ashen-found { opacity: 0.7; font-size: 0.85rem; margin-top: 0.35rem; }
-      .ashen-missing { color: #b8791f; font-size: 0.86rem; margin-top: 0.4rem;
+                     font-size: 0.8rem; color: var(--ashen-text-muted); }
+      .ashen-found { color: var(--ashen-text-muted); font-size: 0.78rem; margin-top: 0.3rem; }
+      /* Not the accent colour on purpose -- accent is reserved for the CTA,
+         active states, and confidence; this is a secondary trace detail. */
+      .ashen-missing { color: #ad8a63; font-size: 0.78rem; margin-top: 0.35rem;
                        font-weight: 500; }
-      .ashen-answer { font-size: 1.05rem; line-height: 1.8; }
+      div[data-testid="stExpander"] summary { font-family: var(--ashen-sans); }
+
+      /* ---- Answer: the main event ----------------------------------------- */
+      div.st-key-answer-card {
+        background: var(--ashen-surface); border: 1px solid var(--ashen-border);
+        border-radius: 16px; padding: 1.7rem 2rem 1.4rem; margin: 0.3rem 0 0.4rem;
+      }
+      .ashen-answer-meta { display: flex; align-items: center; justify-content: space-between;
+                            flex-wrap: wrap; gap: 0.6rem; }
+      .ashen-answer { font-family: var(--ashen-serif); font-size: 1.25rem; line-height: 1.8;
+                      color: var(--ashen-text); margin-top: 1rem; }
+      .ashen-confidence-value { color: var(--ashen-accent); font-weight: 700; font-size: 1.5rem;
+                                 font-family: var(--ashen-serif); }
+      div[data-testid="stProgress"] div[role="progressbar"] > div { background: var(--ashen-accent); }
+      div[data-testid="stProgress"] div[role="progressbar"] { background: var(--ashen-surface-2); }
+
+      /* Conflict callout: the single most important thing to notice on screen,
+         but calm -- a bordered card with a thin accent edge, not an alarm. */
       .ashen-conflict {
-        border-left: 4px solid #9a6a1f; background: rgba(154,106,31,0.10);
-        border-radius: 6px; padding: 0.9rem 1.1rem; margin-bottom: 0.8rem;
+        border: 1px solid var(--ashen-accent-border); border-left: 3px solid var(--ashen-accent);
+        background: var(--ashen-accent-soft); border-radius: 10px;
+        padding: 1rem 1.2rem; margin-bottom: 0.9rem;
       }
       .ashen-gap {
-        border-left: 4px solid #a33a3a; background: rgba(163,58,58,0.10);
-        border-radius: 6px; padding: 0.9rem 1.1rem; margin-bottom: 0.8rem;
+        border-left: 3px solid var(--ashen-text-faint); background: var(--ashen-surface-2);
+        border-radius: 10px; padding: 1rem 1.2rem; margin-bottom: 0.9rem;
       }
-      .ashen-meta { opacity: 0.6; font-size: 0.82rem; }
-      .ashen-pill { border-radius: 999px; padding: 2px 10px; font-size: 0.72rem;
-                    font-weight: 600; white-space: nowrap; }
+      .ashen-meta { color: var(--ashen-text-faint); font-size: 0.8rem; }
+      .ashen-claim-won { font-weight: 600; }
+      .ashen-claim-won .ashen-mark { color: #7fa06a; font-weight: 700; margin-right: 0.4rem; }
+      .ashen-claim-lost { color: var(--ashen-text-muted); font-weight: 400; }
+      .ashen-claim-lost .ashen-mark { color: var(--ashen-text-faint); margin-right: 0.4rem; }
+
+      /* Restrained pill/badge -- colour comes from render.py's muted palette,
+         this just enforces the small, quiet, pill shape across all of them. */
+      .ashen-pill { border-radius: 999px; padding: 2px 11px; font-size: 0.7rem;
+                    font-weight: 600; white-space: nowrap; font-family: var(--ashen-sans); }
+
+      /* Citation chips: understated, not default blue hyperlinks. */
+      .ashen-cite-chip {
+        display: inline-block; background: var(--ashen-surface-2); color: var(--ashen-text-muted);
+        border: 1px solid var(--ashen-border); border-radius: 5px; padding: 0 6px;
+        font-weight: 700; font-size: 0.68rem; font-family: var(--ashen-sans);
+        text-decoration: none; vertical-align: super;
+      }
+      .ashen-cite-chip:hover { color: var(--ashen-accent); border-color: var(--ashen-accent-border); }
+
+      div[data-testid="stExpander"] {
+        background: var(--ashen-surface); border: 1px solid var(--ashen-border); border-radius: 10px;
+      }
+      hr { border-color: var(--ashen-border) !important; }
     </style>
     """,
     unsafe_allow_html=True,
 )
-
 
 # ---------------------------------------------------------------------------
 # API access
@@ -156,7 +302,7 @@ def pill(label: str, colour: str) -> str:
 # ---------------------------------------------------------------------------
 
 def render_step(step: dict[str, Any]) -> None:
-    """One research round, as a card in the trace panel.
+    """One research round, as a card in the process panel.
 
     Deliberately shows the *gap* as prominently as the find. "Still missing: which
     war the Ashen Order won" is what makes the next round make sense, and it is
@@ -169,12 +315,12 @@ def render_step(step: dict[str, Any]) -> None:
         f'<span class="ashen-round">ROUND {step.get("step", "?")}</span>'
         f"{pill(label, colour)}"
         f"</div>"
-        f'<div class="ashen-query">🔍 {step.get("query") or "—"}</div>'
+        f'<div class="ashen-query">{step.get("query") or "—"}</div>'
     )
     if step.get("found"):
         body += f'<div class="ashen-found">{step["found"]}</div>'
     if step.get("missing"):
-        body += f'<div class="ashen-missing">↳ Still missing: {step["missing"]}</div>'
+        body += f'<div class="ashen-missing">Still missing: {step["missing"]}</div>'
     st.markdown(body + "</div>", unsafe_allow_html=True)
 
 
@@ -189,17 +335,18 @@ def render_conflicts(conflicts: list[dict[str, Any]]) -> None:
     if not conflicts:
         return
 
-    st.markdown("#### ⚖️ Sources disagreed")
+    st.markdown('<div class="ashen-eyebrow">Sources disagreed</div>', unsafe_allow_html=True)
     for conflict in conflicts:
         resolved = conflict.get("resolved_value")
         rows = ""
         for claim in conflict_claims(conflict):
             won = is_winning_claim(claim, resolved)
-            marker, weight = ("✅", "600") if won else ("❌", "400")
+            css_class = "ashen-claim-won" if won else "ashen-claim-lost"
+            mark = "&#10003;" if won else "&#8211;"  # a plain check mark / en dash, not emoji
             rows += (
-                f'<div style="margin:0.4rem 0;font-weight:{weight}">{marker} '
-                f'{claim.get("claim", "")}'
-                f'<div class="ashen-meta" style="margin-left:1.6rem">'
+                f'<div class="{css_class}" style="margin:0.4rem 0">'
+                f'<span class="ashen-mark">{mark}</span>{claim.get("claim", "")}'
+                f'<div class="ashen-meta" style="margin-left:1.4rem">'
                 f'{claim.get("source", "unknown source")}</div></div>'
             )
         resolution = conflict.get("resolution") or (
@@ -220,8 +367,9 @@ def render_gaps(unresolved: list[str]) -> None:
     """What the agent could not establish. Shown, never quietly dropped."""
     if not unresolved:
         return
-    st.markdown("#### 🕳️ Not established by the archive")
-    items = "".join(f"<div style='margin:0.3rem 0'>• {claim}</div>" for claim in unresolved)
+    st.markdown('<div class="ashen-eyebrow">Not established by the archive</div>',
+                unsafe_allow_html=True)
+    items = "".join(f"<div style='margin:0.3rem 0'>{claim}</div>" for claim in unresolved)
     st.markdown(f'<div class="ashen-gap">{items}</div>', unsafe_allow_html=True)
 
 
@@ -231,7 +379,7 @@ def render_citations(citations: list[dict[str, Any]]) -> None:
         st.info("No citations were attached to this answer.")
         return
 
-    st.markdown("#### 📎 Evidence")
+    st.markdown('<div class="ashen-eyebrow">Evidence</div>', unsafe_allow_html=True)
     for index, citation in enumerate(citations, start=1):
         location = citation_location(citation)
         # Anchor target for the superscript links in the answer text.
@@ -269,32 +417,30 @@ def render_answer(payload: dict[str, Any]) -> None:
     """The final answer block: status, confidence, prose, conflicts, gaps, evidence."""
     status_label, status_colour = status_badge(payload.get("status", ""))
     confidence = int(payload.get("confidence", 0))
-    conf_label, conf_colour = confidence_style(confidence)
+    conf_label, _conf_colour = confidence_style(confidence)
 
-    left, right = st.columns([3, 1])
-    with left:
+    # A real bordered container (not a raw HTML div) so the whole answer --
+    # the meta row, the native progress bar, and the prose -- renders as one
+    # elevated card. The meta row is one flex line, not Streamlit columns, so
+    # it reads as a single conversational block rather than a dashboard split.
+    with st.container(border=False, key="answer-card"):
         st.markdown(
-            f'{pill(status_label, status_colour)}'
+            f'<div class="ashen-answer-meta">'
+            f'<span>{pill(status_label, status_colour)}'
             f'<span class="ashen-meta" style="margin-left:0.8rem">'
             f'{payload.get("iterations_used", 0)} research rounds · '
-            f'route: {payload.get("route") or "n/a"}</span>',
+            f'route: {payload.get("route") or "n/a"}</span></span>'
+            f'<span><span class="ashen-confidence-value">{confidence}</span>'
+            f'<span class="ashen-meta">/100 · {conf_label}</span></span></div>',
             unsafe_allow_html=True,
         )
-    with right:
-        st.markdown(
-            f'<div style="text-align:right">'
-            f'<span style="color:{conf_colour};font-weight:700;font-size:1.4rem">{confidence}</span>'
-            f'<span class="ashen-meta">/100 · {conf_label}</span></div>',
-            unsafe_allow_html=True,
-        )
-    st.progress(min(max(confidence, 0), 100) / 100)
+        st.progress(min(max(confidence, 0), 100) / 100)
 
-    st.markdown(
-        f'<div class="ashen-answer">'
-        f'{linkify_answer(payload.get("answer", ""), payload.get("citations", []))}</div>',
-        unsafe_allow_html=True,
-    )
-    st.write("")
+        st.markdown(
+            f'<div class="ashen-answer">'
+            f'{linkify_answer(payload.get("answer", ""), payload.get("citations", []))}</div>',
+            unsafe_allow_html=True,
+        )
 
     render_conflicts(payload.get("conflicts", []))
     render_gaps(payload.get("unresolved_claims", []))
@@ -305,7 +451,7 @@ def render_answer(payload: dict[str, Any]) -> None:
 # Layout
 # ---------------------------------------------------------------------------
 
-st.markdown('<div class="ashen-title">🕯️ Ashen Researcher</div>', unsafe_allow_html=True)
+st.markdown('<div class="ashen-title">Ashen Researcher</div>', unsafe_allow_html=True)
 st.markdown(
     '<div class="ashen-sub">It does not stop when it finds something relevant. '
     "It stops when it has enough evidence.</div>",
@@ -315,32 +461,13 @@ st.markdown(
 health = fetch_health()
 
 with st.sidebar:
-    st.markdown("### System status")
-    if health is None:
-        st.error("Backend unreachable")
-        st.caption(f"Expected at `{API_BASE}`. Start it with:")
-        st.code("uvicorn src.api.main:app --port 8000", language="bash")
-    elif health["pipeline"] == "real":
-        st.success("Real pipeline wired")
-    else:
-        st.warning("Running on fixtures")
-        st.caption(
-            "Answers below are canned, not researched. Person B's `research()` "
-            "and Person C's `compose_answer()` are not both importable yet."
-        )
-
-    if health:
-        st.markdown(
-            f"- Agent loop (B): {'✅' if health['research_available'] else '⏳ pending'}\n"
-            f"- Composer (C): {'✅' if health['compose_available'] else '⏳ pending'}\n"
-            f"- Trace: `{health['streaming']}`"
-        )
-        if health["streaming"] == "replayed":
-            st.caption("`replayed` = the loop has no per-round callback yet, so the "
-                       "trace is shown after the run rather than during it.")
+    st.markdown('<div class="ashen-eyebrow">Sample questions</div>', unsafe_allow_html=True)
+    for index, (sample, why) in enumerate(SAMPLE_QUESTIONS):
+        if st.button(sample, key=f"sample-{index}", use_container_width=True):
+            st.session_state["question"] = sample
+        st.caption(why)
 
     st.divider()
-    st.markdown("### Compare")
     baseline = st.toggle(
         "Baseline RAG",
         value=False,
@@ -349,39 +476,53 @@ with st.sidebar:
     )
 
     st.divider()
-    st.markdown("### Sample questions")
-    for index, (sample, why) in enumerate(SAMPLE_QUESTIONS):
-        if st.button(sample, key=f"sample-{index}", use_container_width=True):
-            st.session_state["question"] = sample
-        st.caption(why)
+    with st.expander("System status", expanded=False):
+        if health is None:
+            st.error("Backend unreachable")
+            st.caption(f"Expected at `{API_BASE}`. Start it with:")
+            st.code("uvicorn src.api.main:app --port 8000", language="bash")
+        elif health["pipeline"] == "real":
+            st.success("Real pipeline wired")
+        else:
+            st.warning("Running on fixtures")
+            st.caption(
+                "Answers below are canned, not researched. Person B's `research()` "
+                "and Person C's `compose_answer()` are not both importable yet."
+            )
+
+        if health:
+            st.markdown(
+                f"- Agent loop (B): {'Ready' if health['research_available'] else 'Pending'}\n"
+                f"- Composer (C): {'Ready' if health['compose_available'] else 'Pending'}\n"
+                f"- Trace: `{health['streaming']}`"
+            )
+            if health["streaming"] == "replayed":
+                st.caption("`replayed` = the loop has no per-round callback yet, so the "
+                           "trace is shown after the run rather than during it.")
 
 question = st.text_area(
     "Ask the archive",
     key="question",
     height=90,
     placeholder="Which war was won by the organization that included Isolde Mournvale?",
+    label_visibility="collapsed",
 )
 ask_clicked = st.button("Research", type="primary", disabled=health is None)
-
-# Results live in session state so a rerun -- clicking "Open source file",
-# expanding a citation -- re-renders the answer instead of losing it. Without
-# this, any interaction after the answer arrives would blank the page.
-st.session_state.setdefault("steps", [])
-st.session_state.setdefault("result", None)
-st.session_state.setdefault("error", None)
 
 trace_area = st.container()
 
 if ask_clicked and question.strip():
-    st.session_state.update(steps=[], result=None, error=None)
+    st.session_state.update(steps=[], result=None, error=None, asked=question.strip())
     for key in [k for k in st.session_state if k.startswith("src-")]:
         st.session_state[key] = False
 
+    st.markdown(f'<div class="ashen-user-turn">{question.strip()}</div>', unsafe_allow_html=True)
+
     if health and health["pipeline"] == "stub":
-        st.warning("Fixture mode — this answer is canned, not researched.", icon="⚠️")
+        st.warning("Fixture mode — this answer is canned, not researched.")
 
     with trace_area:
-        st.markdown("### 🧠 Reasoning trace")
+        st.markdown('<div class="ashen-eyebrow">Process</div>', unsafe_allow_html=True)
 
     with st.status("Researching…", expanded=True) as status_box:
         try:
@@ -407,18 +548,45 @@ if ask_clicked and question.strip():
         else:
             status_box.update(label=summarise_trace(st.session_state["steps"]), state="complete")
 
-elif st.session_state["steps"]:
-    # A rerun with no new question: redraw the previous trace from session state.
-    with trace_area:
-        st.markdown("### 🧠 Reasoning trace")
-        for step in st.session_state["steps"]:
-            render_step(step)
-        st.caption(summarise_trace(st.session_state["steps"]))
+elif st.session_state["steps"] or st.session_state["result"] or st.session_state["error"]:
+    # A rerun with no new question: redraw the previous turn from session
+    # state. The trace is now a settled, secondary detail, so it collapses
+    # into a quiet expander instead of standing open the way it does live.
+    if st.session_state["asked"]:
+        st.markdown(f'<div class="ashen-user-turn">{st.session_state["asked"]}</div>',
+                    unsafe_allow_html=True)
+    if st.session_state["steps"]:
+        with trace_area:
+            with st.expander(f"Process — {summarise_trace(st.session_state['steps'])}",
+                              expanded=False):
+                for step in st.session_state["steps"]:
+                    render_step(step)
 
 if st.session_state["error"]:
     st.error(st.session_state["error"])
 elif st.session_state["result"]:
-    st.divider()
     render_answer(st.session_state["result"])
     with st.expander("Raw response (JSON)"):
         st.json(st.session_state["result"])
+
+# The hero (empty, nothing asked yet) state sits lower on the page, like an
+# empty ChatGPT conversation; once there's any activity the header compacts
+# so the conversation feed gets the room instead. Computed here, at the very
+# end of the script, rather than up front: a CSS <style> tag applies to the
+# whole page regardless of where in the markup it appears, but session_state
+# only reflects "did this run produce a result/error/step" once the
+# ask_clicked handling above has actually run -- checking it before that
+# point would still see last run's (pre-submit) state and stay in hero mode
+# for one extra run every time a question is freshly submitted.
+has_activity = bool(
+    st.session_state["result"] or st.session_state["error"] or st.session_state["steps"]
+)
+st.markdown(
+    f"""
+    <style>
+      .block-container {{ padding-top: {"3rem" if has_activity else "14vh"}; }}
+      .ashen-title {{ font-size: {"1.7rem" if has_activity else "2.7rem"}; }}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)

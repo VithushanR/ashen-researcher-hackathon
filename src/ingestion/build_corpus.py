@@ -1,6 +1,7 @@
 """
 Orchestrates the full ingestion pipeline over the real corpus at
-CORPUS_PATH (.env) and writes chunks.jsonl + alias_glossary.json.
+ASHEN_ARCHIVE_ROOT, falling back to the legacy CORPUS_PATH (.env) if unset,
+and writes chunks.jsonl + alias_glossary.json.
 
 Per-file flow:
   chronicles/*.pdf|*.docx  -> parse_pdf/parse_docx -> chunk_text -> "novel" T3
@@ -239,11 +240,11 @@ def _drop_duplicate_pdf_versions(paths: list[Path]) -> list[Path]:
 
 def build_corpus() -> None:
     load_dotenv()
-    corpus_path = os.getenv("CORPUS_PATH")
+    corpus_path = os.getenv("ASHEN_ARCHIVE_ROOT") or os.getenv("CORPUS_PATH")
     if not corpus_path:
         raise RuntimeError(
-            "CORPUS_PATH is not set in .env — add CORPUS_PATH=<path to corpus root> "
-            "before running build_corpus."
+            "Neither ASHEN_ARCHIVE_ROOT nor CORPUS_PATH is set in .env — add "
+            "ASHEN_ARCHIVE_ROOT=<path to corpus root> before running build_corpus."
         )
 
     corpus_root = Path(corpus_path)

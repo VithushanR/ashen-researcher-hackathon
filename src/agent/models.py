@@ -17,13 +17,13 @@ import os
 
 # Cheap/fast text model — B's sufficiency + conflict checks, C's coverage
 # + semantic validation. Runs many times per question, so it must be cheap.
-FAST_MODEL = os.environ.get("OPENROUTER_FAST_MODEL", "google/gemma-4-26b-a4b-it:free")
+FAST_MODEL = os.environ.get("OPENROUTER_FAST_MODEL", "nex-agi/nex-n2.5-pro:free")
 
 # Stronger text model — reserved for C's final answer synthesis only.
-SYNTHESIS_MODEL = os.environ.get("OPENROUTER_SYNTHESIS_MODEL", "google/gemma-4-31b-it:free")
+SYNTHESIS_MODEL = os.environ.get("OPENROUTER_SYNTHESIS_MODEL", "nex-agi/nex-n2.5-pro:free")
 
 # Vision-capable model — B's vision fallback (image -> description).
-VISION_MODEL = os.environ.get("OPENROUTER_VISION_MODEL", "google/gemma-4-31b-it:free")
+VISION_MODEL = os.environ.get("OPENROUTER_VISION_MODEL", "nex-agi/nex-n2.5-pro:free")
 
 # Default model used by call_llm() when a caller doesn't specify one.
 # Points at the fast tier so B's existing no-arg calls stay cheap.

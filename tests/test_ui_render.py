@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from src.ui.render import (
+    TIER_STYLES,
     citation_location,
     confidence_style,
     conflict_claims,
@@ -54,7 +55,7 @@ def test_multiple_citations_are_numbered_in_citation_order() -> None:
         CITATIONS,
     )
     assert cite_numbers(rendered) == ["1", "2"]
-    assert ">1</sup>" in rendered and ">2</sup>" in rendered
+    assert ">1</a>" in rendered and ">2</a>" in rendered
     assert "[isolde_mournvale.md]" not in rendered, "the marker should be replaced by the link"
 
 
@@ -175,13 +176,19 @@ def test_an_unknown_source_gets_no_badge() -> None:
 
 
 def test_badge_colour_is_ordered_by_authority() -> None:
-    """Green for the official record down to red for an unverified letter.
+    """A muted sage for the official record down to a muted terracotta for an
+    unverified letter, and never the same colour for both.
 
     Lets a judge read trust at a glance in the conflict callout, before reading
-    a word of the resolution.
+    a word of the resolution. Reads the actual colours from TIER_STYLES rather
+    than hardcoding hex, since the exact palette is a styling choice that can
+    move without changing what this test verifies.
     """
-    assert "#1f7a4d" in tier_badge({"source_type": "codex"})
-    assert "#a33a3a" in tier_badge({"source_type": "ephemera"})
+    t1_colour = TIER_STYLES["T1_authoritative"][1]
+    t4_colour = TIER_STYLES["T4_unverified"][1]
+    assert t1_colour != t4_colour
+    assert t1_colour in tier_badge({"source_type": "codex"})
+    assert t4_colour in tier_badge({"source_type": "ephemera"})
 
 
 def test_badge_escapes_its_label() -> None:

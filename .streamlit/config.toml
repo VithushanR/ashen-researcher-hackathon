@@ -1,0 +1,13 @@
+# Native-widget theme (buttons, inputs, sliders, the sidebar chrome). The
+# editorial fonts and card/badge/chip styling live in the CSS block injected
+# by src/ui/app.py -- config.toml can only select "sans serif" / "serif" /
+# "monospace", not a specific Google Font, so it stays deliberately minimal
+# and handles color only. Hex values here must stay in sync with the :root
+# custom properties in app.py's injected <style> block.
+[theme]
+base = "dark"
+primaryColor = "#c9a15a"
+backgroundColor = "#15120f"
+secondaryBackgroundColor = "#221d18"
+textColor = "#ece7dd"
+font = "sans serif"

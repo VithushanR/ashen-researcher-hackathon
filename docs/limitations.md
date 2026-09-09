@@ -69,6 +69,28 @@ assumed, and why each was an acceptable trade-off given the time available.
 - **An environment/dependency mismatch temporarily blocked running the newest 21
   adapter tests** (`numpy==2.5.3` pinned in `requirements.txt`, incompatible with a
   Python 3.11 environment) — flagged and being resolved rather than silently ignored.
+- **Coverage validation's requirement-mapping check is exact-match by design, and
+  that strictness occasionally rejects a genuinely correct answer.**
+  `_validate_requirement_mappings` (`coverage_validation.py`) requires a cited claim's
+  text to appear, near-verbatim, in both the synthesized answer and the coverage
+  model's own quoted excerpt of it — three strings from three separate LLM
+  generations. Confirmed empirically against the real pipeline: the same question,
+  same code, run repeatedly, failed with `"Mapped atomic claim must appear in
+  ordinary answer and excerpt"` on roughly 1 in 3 attempts purely from model sampling
+  variance (e.g. "Gloamreach was founded in 246 AS." vs. "The true founding of
+  Gloamreach is marked by 246 AS." — same fact, different wording). This is a
+  deliberate trade-off, not a bug: the alternative (fuzzy/normalized-substring or
+  token-overlap matching) was identified but deferred past submission, since loosening
+  it touches the correctness guarantee the whole coverage gate exists to provide, and
+  that is not a change to make under a deadline. The mitigation shipped instead is a
+  retry, not a loosened check: the API layer (`_compose_with_retry` in
+  `src/api/pipeline.py`) catches this exact error message (nothing broader — a real
+  bug or a quota error still fails immediately) and retries only the synthesis +
+  coverage step, up to 3 attempts total, without repeating the expensive retrieval
+  loop. Verified against the real pipeline: 5/5 questions returned 200, with one run's
+  server log showing attempt 1 fail and attempt 2 pass — 6 compose calls across 5
+  questions, not 15. If all 3 attempts fail, the existing error response is returned
+  unchanged (no crash, no silently degraded stub answer).
 - **A naming mismatch exists between shared API health code** (expects `STRONG_MODEL`,
   `llm_available`) **and the current role-based model configuration**
   (`FAST_MODEL`/`SYNTHESIS_MODEL`/`VISION_MODEL`) — deliberately not patched inside

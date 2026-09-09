@@ -19,13 +19,16 @@ import re
 from typing import Any
 
 # The reliability ladder from spec section 2.7. Colour is ordered by authority
-# -- green for the official record down to red for an unverified letter -- so a
-# judge reads trustworthiness at a glance without knowing what "T4" means.
+# -- muted sage for the official record down to muted terracotta for an
+# unverified letter -- so a judge reads trustworthiness at a glance without
+# knowing what "T4" means. Desaturated on purpose: these sit on a warm
+# charcoal/gold page (src/ui/app.py), and a bright rainbow badge would break
+# the 60/30/10 discipline the rest of the UI holds to.
 TIER_STYLES: dict[str, tuple[str, str]] = {
-    "T1_authoritative": ("T1 · Authoritative", "#1f7a4d"),
-    "T2_curated": ("T2 · Curated", "#2563a8"),
-    "T3_narrative": ("T3 · Narrative", "#9a6a1f"),
-    "T4_unverified": ("T4 · Unverified", "#a33a3a"),
+    "T1_authoritative": ("T1 · Authoritative", "#7fa06a"),
+    "T2_curated": ("T2 · Curated", "#7b93ab"),
+    "T3_narrative": ("T3 · Narrative", "#c9a15a"),
+    "T4_unverified": ("T4 · Unverified", "#b06b5c"),
 }
 
 # Folder-to-tier mapping, used when a citation carries only source_type.
@@ -42,21 +45,21 @@ SOURCE_TYPE_TIERS: dict[str, str] = {
 }
 
 STATUS_STYLES: dict[str, tuple[str, str]] = {
-    "partial_validation_limited": ("Partial — validation limited", "#a33a3a"),
-    "complete": ("Complete", "#1f7a4d"),
-    "complete_with_conflict": ("Conflict resolved", "#9a6a1f"),
-    "partial_gap_stated": ("Partial — gap stated", "#a33a3a"),
+    "partial_validation_limited": ("Partial — validation limited", "#b06b5c"),
+    "complete": ("Complete", "#7fa06a"),
+    "complete_with_conflict": ("Conflict resolved", "#c9a15a"),
+    "partial_gap_stated": ("Partial — gap stated", "#b06b5c"),
 }
 
 VERDICT_STYLES: dict[str, tuple[str, str]] = {
-    "sufficient": ("Enough evidence", "#1f7a4d"),
-    "insufficient": ("Not enough yet", "#9a6a1f"),
-    "conflict_detected": ("Conflict detected", "#7a3fa3"),
-    "capped_unresolved": ("Iteration cap reached", "#a33a3a"),
-    "baseline_no_check": ("No sufficiency check", "#6b7280"),
+    "sufficient": ("Enough evidence", "#7fa06a"),
+    "insufficient": ("Not enough yet", "#c9a15a"),
+    "conflict_detected": ("Conflict detected", "#9b83a8"),
+    "capped_unresolved": ("Iteration cap reached", "#b06b5c"),
+    "baseline_no_check": ("No sufficiency check", "#8a8377"),
 }
 
-NEUTRAL = "#6b7280"
+NEUTRAL = "#8a8377"
 
 # An inline citation marker: [filename.pdf, p.47] or [isolde_mournvale.md].
 _MARKER = re.compile(r"\[([^\[\]]+?)\]")
@@ -164,11 +167,11 @@ def linkify_answer(answer: str, citations: list[dict[str, Any]]) -> str:
         return html.escape(answer).replace("\n", "<br>")
 
     def link(number: int, title: str) -> str:
+        # An understated chip, not a default blue hyperlink -- consistent with
+        # the rest of the palette (src/ui/app.py's .ashen-cite-chip class).
         return (
             f'<a href="#cite-{number}" title="{html.escape(title)}" '
-            f'style="text-decoration:none"><sup style="background:#2563a81a;color:#2563a8;'
-            f'border-radius:4px;padding:1px 5px;font-weight:700;font-size:0.72rem">'
-            f"{number}</sup></a>"
+            f'class="ashen-cite-chip">{number}</a>'
         )
 
     parts: list[str] = []
@@ -191,10 +194,10 @@ def confidence_style(confidence: int) -> tuple[str, str]:
     itself comes from Person B's rubric, not from here.
     """
     if confidence >= 80:
-        return "Well supported", "#1f7a4d"
+        return "Well supported", "#7fa06a"
     if confidence >= 55:
-        return "Supported with caveats", "#9a6a1f"
-    return "Weakly supported", "#a33a3a"
+        return "Supported with caveats", "#c9a15a"
+    return "Weakly supported", "#b06b5c"
 
 
 def status_badge(status: str) -> tuple[str, str]:

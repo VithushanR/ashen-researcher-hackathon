@@ -30,6 +30,7 @@ from fastapi.responses import StreamingResponse
 
 from .pipeline import (
     PipelineUnavailable,
+    _ensure_import_paths,
     answer_question,
     pipeline_status,
     stream_question,
@@ -42,6 +43,15 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Otherwise this only happens as a side effect of pipeline_status()'s first
+# call into _load() -- so the very first request the server ever receives
+# could lose a race against its own sys.path setup. /health/detail imports
+# `.llm` (which needs `agent.*`) before it ever calls pipeline_status(), so
+# without this, that first request alone would wrongly report the LLM layer
+# unavailable. Doing it here, at import time, means it's done before uvicorn
+# can serve anything.
+_ensure_import_paths()
 
 app = FastAPI(
     title="Ashen Researcher",

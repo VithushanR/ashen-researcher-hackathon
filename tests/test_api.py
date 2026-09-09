@@ -104,6 +104,55 @@ def test_health_sees_person_bs_merged_research_loop() -> None:
     assert "question" in inspect.signature(research).parameters
 
 
+REAL_ARCHIVE_ONLY_QUESTION = (
+    "State the precise year in the Age of Shadows that marks the true founding of Gloamreach."
+)
+
+archive_pipeline_ready = pytest.mark.skipif(
+    not os.getenv("VOYAGE_API_KEY") or not os.getenv("OPENROUTER_API_KEY"),
+    reason="VOYAGE_API_KEY/OPENROUTER_API_KEY not set; cannot exercise the real retrieval pipeline",
+)
+
+
+@agent_loop_merged
+@archive_pipeline_ready
+def test_real_pipeline_cites_the_real_archive_not_the_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test for research() silently defaulting to fixtures.fake_hybrid_search.
+
+    Before the fix, every call site in pipeline.py invoked ``research(question)``
+    with no ``search_fn`` override, so it silently fell back to research()'s own
+    default argument -- fixtures.fake_hybrid_search -- even while ASHEN_PIPELINE=real
+    and /health reported "real". REAL_ARCHIVE_ONLY_QUESTION's answer exists only in
+    the real archive, not in fixtures/fake_chunks.json's five fixture documents, so
+    if the fixture search were still in play the citations could only ever name one
+    of those five filenames -- never a real archive file. This must fail against the
+    pre-fix code and pass once _real_answer explicitly wires
+    src.retrieval.hybrid_search.hybrid_search.
+    """
+    monkeypatch.setenv("ASHEN_PIPELINE", "real")
+
+    fixture_filenames = {
+        chunk["filename"]
+        for chunk in json.loads(
+            (REPO_ROOT / "fixtures" / "fake_chunks.json").read_text(encoding="utf-8")
+        )
+    }
+
+    response = TestClient(app).post("/ask", json={"question": REAL_ARCHIVE_ONLY_QUESTION})
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["is_stub"] is False
+    assert body["citations"], "a real research run must cite evidence"
+    cited_filenames = {c["filename"] for c in body["citations"]}
+    assert cited_filenames.isdisjoint(fixture_filenames), (
+        f"citations {cited_filenames} came from fixtures/fake_chunks.json, not the "
+        "real archive -- research() is still being called without search_fn=hybrid_search"
+    )
+
+
 @agent_loop_merged
 def test_the_research_loop_is_importable_without_pytests_path_help() -> None:
     """Reproduce the runtime environment, not the test environment.

@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Any
 
 from .schemas import normalise_response
+from src.retrieval.hybrid_search import hybrid_search
 
 logger = logging.getLogger(__name__)
 
@@ -184,16 +185,41 @@ def _supports_callback(research: Callable | None) -> bool:
         return False
 
 
+def _search_fn_is_real() -> bool:
+    """Guard against the bug that hid behind a green ``/health`` before: an
+    import succeeding is not proof the *right* thing was imported.
+
+    ``_real_answer`` now always passes ``search_fn=hybrid_search`` explicitly
+    (see below), so this checks that the ``hybrid_search`` this module bound
+    at load time really does resolve to Person A's real
+    ``src.retrieval.hybrid_search.hybrid_search`` and not something that
+    quietly shadowed it -- e.g. ``fixtures.fake_hybrid_search`` re-exported
+    under the same name.
+    """
+    return (
+        callable(hybrid_search)
+        and getattr(hybrid_search, "__module__", "") == "src.retrieval.hybrid_search"
+    )
+
+
 def pipeline_status() -> dict[str, Any]:
     """What is actually wired right now. Surfaced by /health and the UI sidebar."""
     research, compose = _load_real_pipeline()
     mode = _mode()
-    using_real = mode != "stub" and research is not None and compose is not None
+    search_wired = _search_fn_is_real()
+    using_real = (
+        mode != "stub" and research is not None and compose is not None and search_wired
+    )
     return {
         "mode": mode,
         "pipeline": "real" if using_real else "stub",
         "research_available": research is not None,
         "compose_available": compose is not None,
+        # True only if research() will actually be called against the real
+        # archive search, not the fixtures/ stand-in. "real" above already
+        # folds this in, but it is reported separately so a false "stub" can
+        # be traced to the search wiring specifically rather than guessed at.
+        "search_wired": search_wired,
         "streaming": "live" if using_real and _supports_callback(research) else "replayed",
     }
 
@@ -259,6 +285,108 @@ def _compose_with_adapters(compose: Callable, state: Any) -> Any:
     )
 
 
+# _validate_requirement_mappings (src/answer/coverage_validation.py) binds a
+# citation claim's text to the synthesized answer and to the coverage model's
+# own quoted excerpt with an exact, only-whitespace-normalised match. All three
+# strings come from separate LLM generations, so this fails periodically on
+# ordinary sampling variance (confirmed empirically: 1 failure in 3 identical
+# real-pipeline runs of the same question, with no code change between them),
+# not because the answer was wrong. Retrying just the compose step -- not
+# Person B's research() -- costs one extra synthesis+coverage call, not a
+# repeat of the whole retrieval loop, and it matched on the very next attempt
+# in that reproduction. The message is matched verbatim rather than a new
+# exception subclass so this stays pure API-layer retry orchestration and
+# leaves coverage_validation.py's matching strictness untouched.
+_COVERAGE_MAPPING_MISMATCH = "Mapped atomic claim must appear in ordinary answer and excerpt"
+_MAX_COMPOSE_ATTEMPTS = 3
+
+
+def _compose_with_retry(compose: Callable, state: Any, question: str) -> Any:
+    """Retry only the exact coverage-mapping mismatch, up to 3 attempts total.
+
+    Any other exception -- a real bug, a 429/quota error, a different
+    ValueError -- propagates on the first attempt. Retrying those would burn
+    quota for no benefit and could mask a genuine failure.
+    """
+    for attempt in range(1, _MAX_COMPOSE_ATTEMPTS + 1):
+        try:
+            result = _compose_with_adapters(compose, state)
+        except ValueError as error:
+            if str(error) != _COVERAGE_MAPPING_MISMATCH:
+                raise
+            if attempt == _MAX_COMPOSE_ATTEMPTS:
+                logger.error(
+                    "Coverage mapping mismatch: attempt %d/%d failed (final) for %r",
+                    attempt, _MAX_COMPOSE_ATTEMPTS, question,
+                )
+                raise
+            logger.warning(
+                "Coverage mapping mismatch: attempt %d/%d failed, retrying for %r: %s",
+                attempt, _MAX_COMPOSE_ATTEMPTS, question, error,
+            )
+            continue
+        logger.info(
+            "Coverage mapping mismatch: attempt %d/%d passed for %r",
+            attempt, _MAX_COMPOSE_ATTEMPTS, question,
+        )
+        return result
+
+
+# _validate_consistency (src/agent/sufficiency.py) rejects a sufficiency
+# verdict whose top-level fields (coverage/agreement/verdict) don't match a
+# deterministic formula derived from the model's own per-requirement
+# assessments and B's existing conflict state -- all read from ONE structured
+# JSON response the fast/cheap-tier model produces in a single call. An
+# exhaustive property test (tests/test_agent_sufficiency.py
+# ::test_complete_consistency_matrix) confirms the check itself is correct and
+# deliberate, not an oversight -- a spot-check attempt to loosen it broke that
+# test and tests/test_agent_sufficiency.py::test_model_cannot_override_
+# unresolved_conflict, which exists specifically to catch a model that hides a
+# real unresolved conflict by claiming a requirement is cleanly supported.
+# So this is the same character of failure as the coverage-mapping mismatch
+# above -- one call's structured output failing to satisfy its own internal
+# consistency contract -- not a deterministic code bug, and the fix belongs
+# here too, not in loosening agent/sufficiency.py.
+#
+# Unlike the compose retry, a retry here re-runs Person B's ENTIRE research()
+# loop from scratch (up to max_iter rounds, each with several LLM calls), not
+# one cheap call -- so this stays capped at one retry (2 attempts total), not
+# 3, to bound the extra quota cost of a mistake this expensive to redo.
+_SUFFICIENCY_CONTRADICTION = "Verdict contradicts requirement assessments or unresolved B conflict"
+_MAX_RESEARCH_ATTEMPTS = 2
+
+
+def _research_with_retry(research: Callable, question: str) -> Any:
+    """Retry only the exact sufficiency self-consistency mismatch, up to 2 attempts.
+
+    Any other exception -- a real bug, a 429/quota error, a different
+    ValueError -- propagates on the first attempt, exactly as in
+    _compose_with_retry: retrying those would burn quota for no benefit.
+    """
+    for attempt in range(1, _MAX_RESEARCH_ATTEMPTS + 1):
+        try:
+            state = research(question, search_fn=hybrid_search)
+        except ValueError as error:
+            if str(error) != _SUFFICIENCY_CONTRADICTION:
+                raise
+            if attempt == _MAX_RESEARCH_ATTEMPTS:
+                logger.error(
+                    "Sufficiency contradiction: attempt %d/%d failed (final) for %r",
+                    attempt, _MAX_RESEARCH_ATTEMPTS, question,
+                )
+                raise
+            logger.warning(
+                "Sufficiency contradiction: attempt %d/%d failed, retrying for %r: %s",
+                attempt, _MAX_RESEARCH_ATTEMPTS, question, error,
+            )
+            continue
+        logger.info(
+            "Sufficiency contradiction: attempt %d/%d passed for %r",
+            attempt, _MAX_RESEARCH_ATTEMPTS, question,
+        )
+        return state
+
+
 def _field(state: Any, name: str, default: Any) -> Any:
     """Read a field from a Pydantic state or a plain dict, whichever we get."""
     value = state.get(name) if isinstance(state, dict) else getattr(state, name, None)
@@ -294,10 +422,15 @@ def _real_answer(
 ) -> dict[str, Any]:
     """Run the real pipeline: Person B's loop, then Person C's composer."""
     if on_step is not None and _supports_callback(research):
-        state = research(question, on_step=on_step)
+        # A retry here would need to somehow un-emit or relabel the steps
+        # already streamed to the UI for the discarded attempt -- a real UX
+        # problem, not just orchestration, and research() doesn't support
+        # on_step yet in this deployment (see _supports_callback's docstring)
+        # so this path is dormant. Left un-retried rather than solved blind.
+        state = research(question, search_fn=hybrid_search, on_step=on_step)
     else:
-        state = research(question)
-    return _to_payload(state, _compose_with_adapters(compose, state), question)
+        state = _research_with_retry(research, question)
+    return _to_payload(state, _compose_with_retry(compose, state, question), question)
 
 
 # ---------------------------------------------------------------------------
@@ -418,15 +551,7 @@ def stream_question(question: str, *, baseline: bool = False) -> Iterator[dict[s
     # Person B's research() has no callback hook, so there is nothing to stream
     # while it runs. Run it, then replay the finished trace. Honest but not
     # live -- /health reports this as "replayed".
-    try:
-        payload = normalise_response(_real_answer(question, research, compose))
-    except Exception as error:  # noqa: BLE001 - a demo must never show a traceback
-        logger.exception("Pipeline failed")
-        yield {"event": "error", "message": str(error)}
-        return
-    for step in payload.get("trace", []):
-        yield {"event": "step", "step": step}
-    yield {"event": "answer", "payload": payload}
+    yield from _stream_replayed(question, research, compose)
 
 
 def _stream_live(question: str, research: Callable, compose: Callable) -> Iterator[dict[str, Any]]:
@@ -474,3 +599,70 @@ def _stream_live(question: str, research: Callable, compose: Callable) -> Iterat
         yield {"event": "answer", "payload": result["payload"]}
     else:  # worker died without setting either -- should not happen, but must not hang
         yield {"event": "error", "message": "Research thread ended without producing a result"}
+
+
+# Comfortably below ASHEN_UI_TIMEOUT (300s default, src/ui/app.py) so a
+# heartbeat always lands well before the client's socket read-timeout could
+# fire from inactivity alone.
+STREAM_HEARTBEAT_SECONDS = float(os.getenv("ASHEN_STREAM_HEARTBEAT", "15"))
+
+
+def _stream_replayed(question: str, research: Callable, compose: Callable) -> Iterator[dict[str, Any]]:
+    """Run the pipeline on a worker thread; emit a heartbeat while it works.
+
+    In "replayed" mode (research() has no on_step callback -- see
+    _supports_callback) the old code called _real_answer() directly in the
+    generator, which blocks the whole request for the run's entire duration
+    with the SSE connection sending zero bytes throughout. Now that a single
+    real question can involve a retried research() and/or a retried compose()
+    (_research_with_retry, _compose_with_retry above), that silent stretch can
+    comfortably exceed the UI's requests.post(timeout=ASHEN_UI_TIMEOUT) --
+    which for a streaming response is an inactivity timeout, not a total-
+    duration one, so it fires on a long silence even though the backend is
+    still legitimately working, not hung. This confirmed diagnosis (reproduced:
+    a run needing one retry took long enough with no bytes sent to trip a
+    300s client read-timeout) is why the fix is a heartbeat, not a bigger
+    ASHEN_UI_TIMEOUT number -- raising the number only postpones the same
+    failure at some new, still-guessable worst case; a heartbeat resets the
+    inactivity clock regardless of how long the retry sequence actually runs.
+    app.py's stream_answer() loop already ignores any event kind it doesn't
+    recognise, so a "heartbeat" event is inert there without a UI change.
+
+    Trace steps still only appear once the whole run finishes -- that part of
+    the "replayed" contract is unchanged; this only keeps the wire alive while
+    waiting for it.
+    """
+    events: queue.Queue = queue.Queue()
+    result: dict[str, Any] = {}
+
+    def worker() -> None:
+        try:
+            result["payload"] = normalise_response(_real_answer(question, research, compose))
+        except Exception as error:  # noqa: BLE001 - a demo must never show a traceback
+            logger.exception("Pipeline failed")
+            result["error"] = str(error)
+        finally:
+            events.put(("done", None))
+
+    thread = threading.Thread(target=worker, daemon=True, name="ashen-research")
+    thread.start()
+
+    while True:
+        try:
+            events.get(timeout=STREAM_HEARTBEAT_SECONDS)
+        except queue.Empty:
+            yield {"event": "heartbeat"}
+            continue
+        break  # only "done" is ever queued in this (non-callback) path
+
+    thread.join(timeout=5)
+    if "error" in result:
+        yield {"event": "error", "message": result["error"]}
+        return
+    payload = result.get("payload")
+    if payload is None:  # worker died without setting either -- should not happen
+        yield {"event": "error", "message": "Research thread ended without producing a result"}
+        return
+    for step in payload.get("trace", []):
+        yield {"event": "step", "step": step}
+    yield {"event": "answer", "payload": payload}

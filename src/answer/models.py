@@ -18,9 +18,9 @@ class ComposedAnswer(BaseModel):
     @classmethod
     def validate_status(cls, value: str) -> str:
         """Accept only the team's agreed output statuses."""
-        if value not in {"complete", "complete_with_conflict", "partial_gap_stated"}:
+        if value not in {"complete", "complete_with_conflict", "partial_gap_stated", "partial_validation_limited"}:
             raise ValueError(
-                "status must be complete, complete_with_conflict, or partial_gap_stated"
+                "status must be complete, complete_with_conflict, partial_gap_stated, or partial_validation_limited"
             )
         return value
 

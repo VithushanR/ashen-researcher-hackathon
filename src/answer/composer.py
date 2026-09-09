@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING
 
 from .models import ComposedAnswer
 from .conflicts import build_conflict_presentation
-from .coverage_validation import PresentationCompletenessError, validate_answer_coverage
-from .semantic_validation import validate_citation_claim
+from .coverage_validation import PresentationCompletenessError, ValidationLimitation, validate_answer_coverage
+from .semantic_validation import CitationSupportError, validate_citation_claim
 from .synthesis import CitationClaim, OrdinarySectionResult, PartialSynthesisResult, SynthesisResult, build_synthesis_prompt
 
 if TYPE_CHECKING:
@@ -31,7 +31,8 @@ def compose_answer(
     Person B's decisions. Non-conflict partial states synthesize only supported facts and
     append Person B's unresolved claims unchanged, without citations for gaps.
     Generated citation claims require an injected semantic validator. Missing
-    wiring, rejected claims, and malformed verdicts fail before returning an answer.
+    wiring and malformed verdicts fail before returning an answer. Expected ordinary
+    support failures are withheld; competing B claims still fail closed.
     Every final answer also requires injected coverage validation, including
     answers with no generated claims and deterministic conflict/gap reports.
     A clear independent presentation omission permits one synthesis repair using
@@ -90,7 +91,7 @@ def compose_answer(
             for item in conflict_citations
         ]
         try:
-            validate_answer_coverage(
+            coverage_verdict = validate_answer_coverage(
                 answer, combined_claims, validate_coverage=validate_coverage,
                 unresolved_claims=state.unresolved_claims, conflicts=conflicts,
                 ordinary_section=synthesis if presentation else None,
@@ -109,15 +110,64 @@ def compose_answer(
         break
     if combined_claims and validate_semantics is None:
         raise ValueError("A semantic-validation adapter is required for generated citation claims")
-    for reference in synthesis.citation_claims:
-        validate_citation_claim(
-            reference.claim, reference.chunk_id, evidence_by_id,
-            validate_semantics=validate_semantics,
-        )
+    accepted = []
+    failures = []
+    for index, reference in enumerate(synthesis.citation_claims):
+        try:
+            validate_citation_claim(
+                reference.claim, reference.chunk_id, evidence_by_id,
+                validate_semantics=validate_semantics,
+            )
+        except CitationSupportError:
+            # Only validated, expected ordinary support failures are withheld.
+            # Malformed output, invalid IDs and system exceptions still propagate.
+            failures.append(index)
+        else:
+            accepted.append((index, reference.model_copy(deep=True)))
     for reference in conflict_citations:
         validate_citation_claim(
             reference.raw_claim, reference.chunk_id, evidence_by_id,
             validate_semantics=validate_semantics, conflict_attribution=True,
+        )
+    if failures:
+        limitations = []
+        for index in failures:
+            affected = tuple(i for i, item in enumerate(coverage_verdict.presentation)
+                             if state.required_claims and index in item.citation_claim_indices)
+            if affected:
+                part = "; ".join(state.required_claims[i] for i in affected)
+                message = (f'Information requested by "{part}" could not be safely validated '
+                           "against the retrieved evidence and is not presented as confirmed.")
+            else:
+                message = ("An additional statement could not be safely validated against "
+                           "the retrieved evidence and has been withheld.")
+            limitations.append(ValidationLimitation(affected, message))
+        kept_claims = [reference for _, reference in accepted]
+        ordinary_answer = "\n".join(dict.fromkeys(reference.claim for reference in kept_claims)) or None
+        sections = [ordinary_answer] if ordinary_answer is not None else []
+        if presentation:
+            sections.append(presentation.answer)
+        if state.unresolved_claims:
+            sections.append(_format_gaps(state.unresolved_claims))
+        sections.append("Validation limitations:\n" + "\n".join(
+            dict.fromkeys(item.message for item in limitations)))
+        answer = "\n\n".join(sections)
+        combined_claims = kept_claims + [
+            CitationClaim(claim=item.attributed_claim, chunk_id=item.chunk_id)
+            for item in conflict_citations
+        ]
+        remapped = [[new for new, (old, _) in enumerate(accepted) if old in item.citation_claim_indices]
+                    for item in coverage_verdict.presentation]
+        # One final check of the actual reconstructed text, OUTSIDE repair.
+        # Validated claims are not regenerated or semantically reinterpreted.
+        validate_answer_coverage(
+            answer, combined_claims, validate_coverage=validate_coverage,
+            question=state.question, required_claims=state.required_claims, evidence=evidence_context,
+            unresolved_claims=state.unresolved_claims, conflicts=conflicts,
+            ordinary_answer=ordinary_answer,
+            ordinary_section=OrdinarySectionResult(answer=ordinary_answer, citation_claims=kept_claims)
+                if presentation else None,
+            validation_limitations=limitations, preserved_requirement_claims=remapped,
         )
     citations = []
     for reference in combined_claims:
@@ -130,6 +180,8 @@ def compose_answer(
             "source_type": evidence.source_type,
         })
     status = "complete_with_conflict" if presentation else "complete"
+    if failures:
+        status = "partial_validation_limited"
     if state.unresolved_claims or (presentation and presentation.has_unresolved):
         status = "partial_gap_stated"
 

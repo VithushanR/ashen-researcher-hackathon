@@ -18,10 +18,18 @@ def complete_coverage(prompt):
     context = payload["research_context"]
     status = "conflict" if context["conflicts"] else (
         "gap" if context["unresolved_claims"] else "answered")
-    return {"coverage": "complete", "presentation": [
-        {"requirement": requirement, "status": status, "answer_excerpt": payload["answer"],
-         "citation_claim_indices": list(range(len(payload["citation_claims"]))) if status == "answered" else [],
-         "gap_indices": [0] if status == "gap" else [],
-         "conflict_indices": [0] if status == "conflict" else []}
-        for requirement in payload["required_claims"] or [payload["question"]]
-    ]}
+    assessments = []
+    limitations = context.get("validation_limitations", [])
+    for i, requirement in enumerate(payload["required_claims"] or [payload["question"]]):
+        indices = [j for j, item in enumerate(limitations)
+                   if not payload["required_claims"] or i in item["requirement_indices"]]
+        if indices:
+            assessments.append({"requirement": requirement, "status": "validation_limited",
+                "answer_excerpt": limitations[indices[0]]["message"], "limitation_indices": indices})
+        else:
+            assessments.append({"requirement": requirement, "status": status,
+                "answer_excerpt": payload["answer"],
+                "citation_claim_indices": list(range(len(payload["citation_claims"]))) if status == "answered" else [],
+                "gap_indices": [0] if status == "gap" else [],
+                "conflict_indices": [0] if status == "conflict" else []})
+    return {"coverage": "complete", "presentation": assessments}

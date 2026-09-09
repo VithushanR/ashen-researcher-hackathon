@@ -191,12 +191,14 @@ def test_unknown_chunk_still_fails_after_coverage_before_semantics():
 
 def test_coverage_pass_does_not_override_failed_support():
     coverage = Mock(side_effect=complete_coverage)
-    with pytest.raises(CitationSupportError):
-        compose_answer(input_state(), synthesize=Mock(return_value=output()),
+    result = compose_answer(input_state(), synthesize=Mock(return_value=output()),
                        validate_coverage=coverage, validate_semantics=Mock(return_value={
                            "support": "unsupported", "explicit_absence": "clear",
                        }))
-    coverage.assert_called_once()
+    assert result.citations == []
+    assert EVENT not in result.answer
+    assert result.status == "partial_validation_limited"
+    assert coverage.call_count == 2
 
 
 def test_no_evidence_gap_answer_still_requires_coverage():

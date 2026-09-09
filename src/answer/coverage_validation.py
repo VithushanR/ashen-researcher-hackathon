@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -25,21 +26,30 @@ class CoverageVerdict(BaseModel):
         return self
 
 
+@dataclass(frozen=True)
+class ValidationLimitation:
+    """Trusted C outcome; never synthesized evidence or a Person B research gap."""
+
+    requirement_indices: tuple[int, ...]
+    message: str
+
+
 class PresentationAssessment(BaseModel):
     """One presentation check, not a new B research assessment."""
 
     model_config = ConfigDict(extra="forbid", strict=True, revalidate_instances="always")
     requirement: str = Field(min_length=1)
-    status: Literal["answered", "gap", "conflict", "omitted", "uncertain"]
+    status: Literal["answered", "gap", "conflict", "omitted", "uncertain", "validation_limited"]
     answer_excerpt: str | None = None
     evidence_ids: list[str] = Field(default_factory=list)
     citation_claim_indices: list[int] = Field(default_factory=list)
     gap_indices: list[int] = Field(default_factory=list)
     conflict_indices: list[int] = Field(default_factory=list)
+    limitation_indices: list[int] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def consistent_assessment(self):
-        if self.status in {"answered", "gap", "conflict"}:
+        if self.status in {"answered", "gap", "conflict", "validation_limited"}:
             if not self.answer_excerpt or not self.answer_excerpt.strip():
                 raise ValueError("Represented requirements need an answer excerpt")
         elif self.answer_excerpt is not None:
@@ -87,6 +97,8 @@ def validate_answer_coverage(
     ordinary_section: OrdinarySectionResult | None = None,
     question: str, required_claims: list[str], evidence: list[dict[str, str]],
     ordinary_answer: str | None = None,
+    validation_limitations: list[ValidationLimitation] | None = None,
+    preserved_requirement_claims: list[list[int]] | None = None,
 ) -> PresentationCoverageVerdict:
     """Require coverage for all factual ideas, including undeclared inferences.
 
@@ -210,6 +222,30 @@ INPUT DATA:
     }
     if ordinary_section is not None:
         payload["ordinary_section"] = ordinary_section.model_dump()
+    if validation_limitations:
+        instructions = instructions.replace("INPUT DATA:\n", """C validation limitations:
+The final answer was reconstructed from individually validated claims. The trusted
+validation_limitations below describe intentionally withheld statements, NOT B
+research gaps and NOT evidence. Their faithful reporting requires no citation.
+Do not fill these limitations, reclassify them as B gaps/conflicts, or request
+synthesis repair. Every limitation message must remain present in the final answer.
+A requirement affected by a limitation may use status validation_limited and
+limitation_indices (zero-based references into validation_limitations); it may
+still be answered if its remaining validated claims fully answer it. Preserve all
+supported parts. Unmapped limitations do not establish a requirement mapping.
+When required_claims is empty, assess the original question and the faithful
+limitation report without inventing a checklist. No factual claims is legitimate
+when all ordinary statements were withheld; do not invent a no-evidence finding.
+Existing citation coverage, B conflict separation, and atomic mapping rules remain.
+For answered requirements, use only preserved_requirement_claims for that
+requirement: already validated claims cannot be reassigned to different needs.
+A remaining accidental omission still fails; withholding is allowed only when
+linked to this trusted C context. Do not copy any withheld assertion as fact.
+
+INPUT DATA:
+""")
+        payload["research_context"]["validation_limitations"] = [asdict(item) for item in validation_limitations]
+        payload["preserved_requirement_claims"] = preserved_requirement_claims
     prompt = instructions + json.dumps(payload, ensure_ascii=False)
     raw = validate_coverage(prompt)
     if isinstance(raw, CoverageVerdict):
@@ -226,7 +262,24 @@ INPUT DATA:
     if [item.requirement for item in verdict.presentation] != expected:
         raise ValueError("Presentation assessments must match the full checklist in order")
     known_ids = {item["chunk_id"] for item in evidence}
-    for item in verdict.presentation:
+    for limitation in validation_limitations or []:
+        if limitation.message not in answer:
+            raise ValueError("C validation limitation report missing from final answer")
+    for requirement_index, item in enumerate(verdict.presentation):
+        if item.status == "validation_limited":
+            indices = item.limitation_indices
+            if not indices or len(set(indices)) != len(indices):
+                raise ValueError("Validation-limited assessment requires unique limitation references")
+            if any(i < 0 or i >= len(validation_limitations or []) for i in indices):
+                raise ValueError("Unknown C validation limitation")
+            if required_claims and any(requirement_index not in validation_limitations[i].requirement_indices
+                                       for i in indices):
+                raise ValueError("Limitation does not belong to this requirement")
+        elif item.limitation_indices:
+            raise ValueError("Unexpected limitation references")
+        if item.status == "answered" and preserved_requirement_claims is not None and required_claims:
+            if not set(item.citation_claim_indices).issubset(preserved_requirement_claims[requirement_index]):
+                raise ValueError("Preserved claims cannot be reassigned to another requirement")
         if any(chunk_id not in known_ids for chunk_id in item.evidence_ids):
             raise ValueError("Unknown presentation evidence reference")
         if item.answer_excerpt is not None and item.answer_excerpt not in answer:

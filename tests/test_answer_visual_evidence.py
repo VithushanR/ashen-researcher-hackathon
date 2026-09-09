@@ -11,7 +11,7 @@ from unittest.mock import Mock
 import pytest
 
 from src.answer.composer import compose_answer
-from src.answer.semantic_validation import CitationSupportError
+from src.answer.semantic_validation import CitationSupportError, validate_citation_claim
 from tests.answer_helpers import complete_coverage
 from tests.test_answer_composer import evidence, state
 
@@ -109,8 +109,8 @@ def test_thin_image_caption_does_not_support_visual_fact_even_with_vision_chunk_
                 "reason": "The cited raw caption names the relic but states no band count."}
 
     with pytest.raises(CitationSupportError) as error:
-        compose_answer(state(raw, derived), synthesize=Mock(return_value=synthesis(claim, "raw")),
-                       validate_coverage=complete_coverage, validate_semantics=semantic)
+        validate_citation_claim(claim, "raw", {"raw": raw, derived.chunk_id: derived},
+                                validate_semantics=semantic)
     assert error.value.chunk_id == "raw"
     assert error.value.verdict.support == "unsupported"
 
@@ -148,8 +148,7 @@ def test_strengthened_uncertain_vision_claim_is_rejected(description):
                 "reason": "The claim replaces uncertain visual interpretation with certainty."}
 
     with pytest.raises(CitationSupportError):
-        compose_answer(state(item), synthesize=Mock(return_value=synthesis(claim, item.chunk_id)),
-                       validate_coverage=complete_coverage, validate_semantics=semantic)
+        validate_citation_claim(claim, item.chunk_id, {item.chunk_id: item}, validate_semantics=semantic)
 
 
 def test_faithful_vision_hedging_is_kept_in_answer_and_citation_claim():

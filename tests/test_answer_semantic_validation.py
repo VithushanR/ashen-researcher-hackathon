@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from src.answer.composer import compose_answer
 from tests.answer_helpers import complete_coverage
-from src.answer.semantic_validation import CitationSupportError, SemanticVerdict
+from src.answer.semantic_validation import CitationSupportError, SemanticVerdict, validate_citation_claim
 from tests.test_answer_composer import evidence, state
 
 
@@ -56,10 +56,9 @@ def test_real_chunk_does_not_allow_failed_semantic_check(support):
     claim = "Hesper has a guarded temperament."
     validator = Mock(return_value=verdict(support, reason="Passage only records an event."))
     with pytest.raises(CitationSupportError) as error:
-        compose_answer(
-            state(evidence("event", text="Hesper was evasive during interrogation.")),
-            validate_coverage=complete_coverage, synthesize=Mock(return_value=synthesis(claim)), validate_semantics=validator,
-        )
+        validate_citation_claim(claim, "event", {
+            "event": evidence("event", text="Hesper was evasive during interrogation.")},
+            validate_semantics=validator)
     assert error.value.claim == claim
     assert error.value.chunk_id == "event"
     assert error.value.verdict.support == support
@@ -78,8 +77,8 @@ def test_unrelated_real_chunk_cannot_be_rescued_by_other_evidence():
         return verdict("unsupported", reason="The cited passage is unrelated.")
 
     with pytest.raises(CitationSupportError):
-        compose_answer(state(unrelated, actual_support),
-                       validate_coverage=complete_coverage, synthesize=Mock(return_value=synthesis(claim)), validate_semantics=validator)
+        validate_citation_claim(claim, "event", {"event": unrelated, "other": actual_support},
+                                validate_semantics=validator)
 
 
 @pytest.mark.parametrize("attribute,absence,adjacent,inferred", [
@@ -108,8 +107,8 @@ def test_cross_chunk_absence_blocks_inference_even_if_local_support_is_positive(
         )
 
     with pytest.raises(CitationSupportError) as error:
-        compose_answer(state(disclaimer, event), validate_coverage=complete_coverage, synthesize=Mock(return_value=synthesis(inferred)),
-                       validate_semantics=validator)
+        validate_citation_claim(inferred, "event", {"absence": disclaimer, "event": event},
+                                validate_semantics=validator)
     assert error.value.verdict.support == "supported"
     assert error.value.verdict.explicit_absence == "violated"
     assert error.value.verdict.absence_findings[0].passage == absence
@@ -152,8 +151,8 @@ def test_other_entity_is_not_automatically_blocked_by_disclaimer():
 
 def test_uncertain_absence_scope_fails_safely():
     with pytest.raises(CitationSupportError):
-        compose_answer(state(evidence("event")), validate_coverage=complete_coverage, synthesize=Mock(return_value=synthesis("Claim")),
-                       validate_semantics=Mock(return_value=verdict(explicit_absence="uncertain")))
+        validate_citation_claim("Claim", "event", {"event": evidence("event")},
+                                validate_semantics=Mock(return_value=verdict(explicit_absence="uncertain")))
 
 
 def test_unknown_chunk_rejected_before_any_semantic_calls():
@@ -202,24 +201,30 @@ def test_validator_failure_propagates_without_answer():
                        validate_semantics=Mock(side_effect=RuntimeError("Validator unavailable")))
 
 
-def test_one_rejected_claim_aborts_entire_answer_without_rewriting():
+def test_one_rejected_claim_is_withheld_without_changing_validated_claim():
     output = {"answer": "Supported fact. Unsupported inference.", "citation_claims": [
         {"claim": "Supported fact.", "chunk_id": "event"},
         {"claim": "Unsupported inference.", "chunk_id": "event"},
     ]}
     before = deepcopy(output)
     validator = Mock(side_effect=[SemanticVerdict(**verdict()), verdict("unsupported")])
-    with pytest.raises(CitationSupportError):
-        compose_answer(state(evidence("event")), validate_coverage=complete_coverage, synthesize=Mock(return_value=output),
-                       validate_semantics=validator)
+    result = compose_answer(state(evidence("event")), validate_coverage=complete_coverage,
+                            synthesize=Mock(return_value=output), validate_semantics=validator)
+    assert result.status == "partial_validation_limited"
+    assert "Supported fact." in result.answer
+    assert "Unsupported inference." not in result.answer
+    assert [item["claim"] for item in result.citations] == ["Supported fact."]
     assert validator.call_count == 2
     assert output == before
 
 
 def test_partial_supported_claim_is_also_semantically_checked():
     validator = Mock(return_value=verdict("unsupported"))
-    with pytest.raises(CitationSupportError):
-        compose_answer(state(evidence("event"), unresolved_claims=["Unknown date."]),
-                       validate_coverage=complete_coverage, synthesize=Mock(return_value=synthesis("Unsupported claim")),
-                       validate_semantics=validator)
+    result = compose_answer(state(evidence("event"), unresolved_claims=["Unknown date."]),
+                            validate_coverage=complete_coverage, synthesize=Mock(return_value=synthesis("Unsupported claim")),
+                            validate_semantics=validator)
+    assert result.status == "partial_gap_stated"
+    assert result.citations == []
+    assert "Unknown date." in result.answer
+    assert "Unsupported claim" not in result.answer
     validator.assert_called_once()

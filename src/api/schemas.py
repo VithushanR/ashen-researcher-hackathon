@@ -28,7 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # The statuses Person C's ComposedAnswer is allowed to emit (docs/contracts.md).
 # Kept as a Literal on purpose: this one really is a closed set, and an unknown
 # status means C's contract changed and we need to know immediately.
-AnswerStatus = Literal["complete", "complete_with_conflict", "partial_gap_stated"]
+AnswerStatus = Literal["complete", "complete_with_conflict", "partial_gap_stated", "partial_validation_limited"]
 
 
 class Citation(BaseModel):

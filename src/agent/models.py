@@ -9,33 +9,21 @@ Keeping the ids here means locking the real OpenRouter ids is a
 one-file edit that both B and C pick up automatically — no hunting
 through call sites.
 
-IMPORTANT — these values are UNVERIFIED PLACEHOLDERS.
-The exact OpenRouter ids have not been confirmed against OpenRouter's
-live free-tier catalog yet (model availability changes). Do NOT trust
-these as correct — verify each against https://openrouter.ai/models
-and replace here before any real (non-mocked) run. They are wired to
-read from environment variables first so they can be locked without a
-code change:
-
-    FAST_MODEL      = os.environ["OPENROUTER_FAST_MODEL"]  (or the default below)
-    SYNTHESIS_MODEL = os.environ["OPENROUTER_SYNTHESIS_MODEL"]
-    VISION_MODEL    = os.environ["OPENROUTER_VISION_MODEL"]
+Defaults below are the team's selected model IDs. Environment overrides
+are read at import time; set them before importing the shared client.
+Availability and pricing are not verified by this module.
 """
 import os
 
-# TODO(team): confirm these three against OpenRouter's live catalog and
-# lock them. Until then they are placeholders, overridable via env so we
-# never have to touch code to change them.
-
 # Cheap/fast text model — B's sufficiency + conflict checks, C's coverage
 # + semantic validation. Runs many times per question, so it must be cheap.
-FAST_MODEL = os.environ.get("OPENROUTER_FAST_MODEL", "PLACEHOLDER_FAST_MODEL")
+FAST_MODEL = os.environ.get("OPENROUTER_FAST_MODEL", "google/gemma-4-26b-a4b-it:free")
 
 # Stronger text model — reserved for C's final answer synthesis only.
-SYNTHESIS_MODEL = os.environ.get("OPENROUTER_SYNTHESIS_MODEL", "PLACEHOLDER_SYNTHESIS_MODEL")
+SYNTHESIS_MODEL = os.environ.get("OPENROUTER_SYNTHESIS_MODEL", "google/gemma-4-31b-it:free")
 
 # Vision-capable model — B's vision fallback (image -> description).
-VISION_MODEL = os.environ.get("OPENROUTER_VISION_MODEL", "PLACEHOLDER_VISION_MODEL")
+VISION_MODEL = os.environ.get("OPENROUTER_VISION_MODEL", "google/gemma-4-31b-it:free")
 
 # Default model used by call_llm() when a caller doesn't specify one.
 # Points at the fast tier so B's existing no-arg calls stay cheap.

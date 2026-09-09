@@ -277,8 +277,12 @@ _DISTRIBUTION_NAMES = {
 
 def _third_party_imports(paths: list[Path]) -> set[str]:
     """Top-level packages our own code imports, excluding stdlib and first-party."""
+    # Every top-level package this repo defines itself. Kept as an explicit list
+    # rather than inferred, so a teammate adding a package has to add it here --
+    # which is a one-line change, and the alternative is a guard that silently
+    # stops guarding the moment the layout grows.
     first_party = {"src", "agent", "fixtures", "tests", "api", "ui", "retrieval",
-                   "ingestion", "answer"}
+                   "ingestion", "answer", "evaluation", "scripts"}
     found: set[str] = set()
     for path in paths:
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):

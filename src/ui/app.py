@@ -255,14 +255,50 @@ def render_citations(citations: list[dict[str, Any]]) -> None:
                 st.session_state[key] = True
             if st.session_state.get(key):
                 source = fetch_source(str(citation.get("filename", "")))
-                if source is None:
-                    st.warning("That file is not in the local archive folder. "
-                               "Set ASHEN_ARCHIVE_ROOT if the archive lives elsewhere.")
-                elif source.get("content"):
-                    st.text_area("File contents", source["content"], height=280,
-                                 key=f"text-{key}")
-                else:
-                    st.info(source.get("note", "Binary source — open it from the archive."))
+                render_source(source, key)
+
+
+def render_source(source: dict[str, Any] | None, key: str) -> None:
+    """Show an opened archive file, whatever format it turned out to be.
+
+    The archive is deliberately mixed-format, so this has to handle plain text,
+    Markdown, DOCX, born-digital PDF, scanned PDF and figure plates. A citation
+    the judge cannot open is a citation they cannot check, which defeats the
+    point of showing it.
+
+    Where the text was extracted rather than read directly, that is labelled.
+    OCR output in particular can contain errors, and presenting it as if it were
+    the literal file would be overclaiming.
+    """
+    if source is None:
+        st.warning("That file is not in the local archive folder. "
+                   "Set ASHEN_ARCHIVE_ROOT if the archive lives elsewhere.")
+        return
+
+    provenance = {
+        "docx": "Text extracted from the .docx, including table cells.",
+        "pdf": "Text extracted from the PDF.",
+        "pdf-ocr": "Scanned page read with OCR - the text may contain errors.",
+    }.get(source.get("extracted_from", ""))
+
+    if source.get("image_base64"):
+        import base64
+
+        st.image(base64.b64decode(source["image_base64"]),
+                 caption=source.get("path", ""), use_container_width=True)
+        return
+
+    if source.get("content"):
+        if provenance:
+            st.caption(provenance)
+        st.text_area("File contents", source["content"], height=280, key=f"text-{key}")
+        if source.get("truncated"):
+            st.caption(f"Showing the first part of the file - open "
+                       f"`{source.get('path', '')}` in the archive for the rest.")
+        return
+
+    st.info(source.get("note") or "This source cannot be displayed here. "
+            f"Open it from the archive at `{source.get('path', '')}`.")
 
 
 def render_answer(payload: dict[str, Any]) -> None:

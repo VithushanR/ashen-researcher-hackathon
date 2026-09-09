@@ -88,7 +88,14 @@ ARCHIVE_ROOT = _resolve_archive_root()
 # Only formats we can hand back as text. Everything else is reported by path;
 # re-parsing PDFs here would duplicate Person A's ingestion code and create two
 # different ways to read the same file.
-TEXT_SUFFIXES = {".txt", ".md", ".markdown"}
+# Formats /source can render as text in the browser. The archive is deliberately
+# mixed-format -- plain text, Markdown, DOCX, PDF and scanned PDF -- and a
+# citation is worthless to a judge if clicking it says "binary source, go find it
+# yourself". So every format the corpus actually contains is extracted here.
+TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".json", ".csv"}
+DOCX_SUFFIXES = {".docx"}
+PDF_SUFFIXES = {".pdf"}
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 MAX_SOURCE_CHARS = 20_000
 
 
@@ -215,6 +222,169 @@ def ask_stream(request: AskRequest) -> StreamingResponse:
     )
 
 
+def _extract_docx(path: Path) -> str:
+    """Paragraphs and table cells from a .docx.
+
+    Tables matter here and are easy to forget. The codex volumes keep the facts
+    a judge will check -- forging years, garrison strengths, attunement costs --
+    in infobox tables, not in prose. A paragraph-only reader returns a document
+    that looks complete and is missing exactly the number the citation is about.
+    """
+    import docx  # imported lazily: /source must not need it until it is used
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    document = docx.Document(str(path))
+
+    # Walked in document order rather than "all paragraphs, then all tables".
+    # The obvious implementation reads both collections separately and appends
+    # the tables at the end -- which is wrong twice over. It scrambles the
+    # reading order, and because the output is truncated at MAX_SOURCE_CHARS,
+    # in a long codex volume the tables fall off the end entirely. Those
+    # infoboxes hold the facts a judge actually checks -- forging years,
+    # garrison strengths, attunement costs -- so the naive version drops
+    # precisely the content the citation is usually about.
+    blocks: list[str] = []
+    for child in document.element.body.iterchildren():
+        if child.tag.endswith("}p"):
+            text = Paragraph(child, document).text.strip()
+            if text:
+                blocks.append(text)
+        elif child.tag.endswith("}tbl"):
+            for row in Table(child, document).rows:
+                cells = [c.text.strip() for c in row.cells if c.text.strip()]
+                if cells:
+                    blocks.append(" | ".join(cells))
+    return "\n\n".join(blocks)
+
+
+def _extract_pdf(path: Path) -> tuple[str, bool]:
+    """Text from a .pdf, and whether it had to be read as a scan.
+
+    Returns ``(text, was_scanned)``. The archive's ephemera includes scanned
+    pages with no text layer, so a PDF that yields almost nothing is not
+    necessarily empty -- it is an image. We say which, because "this page is a
+    scan" is a useful thing for a judge to know about a source, and silently
+    returning an empty box would look like a bug in our viewer.
+    """
+    import pymupdf
+
+    document = pymupdf.open(str(path))
+    try:
+        pages = [page.get_text().strip() for page in document]
+        text = "\n\n".join(f"[page {i + 1}]\n{t}" for i, t in enumerate(pages) if t)
+        if text.strip():
+            return text, False
+
+        # No text layer. Try OCR, which is optional -- Person A's ingestion needs
+        # Tesseract installed, and a viewer that 500s on a machine without it
+        # would be worse than one that says "scanned, no text layer".
+        try:
+            import pytesseract
+            from PIL import Image
+
+            chunks = []
+            for i, page in enumerate(document):
+                pixmap = page.get_pixmap(dpi=200)
+                image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
+                ocr = pytesseract.image_to_string(image).strip()
+                if ocr:
+                    chunks.append(f"[page {i + 1} - OCR]\n{ocr}")
+            if chunks:
+                return "\n\n".join(chunks), True
+        except Exception as error:  # noqa: BLE001 - OCR is a bonus, never a requirement
+            logger.debug("OCR unavailable for %s: %s", path.name, error)
+
+        return "", True
+    finally:
+        document.close()
+
+
+def _read_source(path: Path) -> dict:
+    """Best-effort text for any archive format, plus how we got it.
+
+    Every branch returns the same shape, so the UI has one thing to render. A
+    format we cannot extract still returns a usable payload with ``content:
+    None`` and a note, rather than raising -- this endpoint exists to make
+    citations checkable, and failing loudly on an unusual file would break the
+    citation next to it too.
+    """
+    suffix = path.suffix.lower()
+
+    if suffix in TEXT_SUFFIXES:
+        return {
+            "content_type": "text",
+            "content": path.read_text(encoding="utf-8", errors="replace")[:MAX_SOURCE_CHARS],
+            "extracted_from": suffix.lstrip("."),
+        }
+
+    if suffix in IMAGE_SUFFIXES:
+        # Figure plates are cited by Person B's vision fallback. Base64 rather
+        # than a file URL so the browser needs no second request into the
+        # archive, and no static mount has to expose the corpus.
+        import base64
+
+        return {
+            "content_type": "image",
+            "content": None,
+            "image_base64": base64.b64encode(path.read_bytes()).decode("ascii"),
+            "image_format": suffix.lstrip("."),
+            "extracted_from": suffix.lstrip("."),
+        }
+
+    try:
+        if suffix in DOCX_SUFFIXES:
+            text = _extract_docx(path)
+            return {
+                "content_type": "text" if text.strip() else "empty",
+                "content": text[:MAX_SOURCE_CHARS] or None,
+                "extracted_from": "docx",
+                "note": None if text.strip() else "This .docx contains no extractable text.",
+            }
+
+        if suffix in PDF_SUFFIXES:
+            text, scanned = _extract_pdf(path)
+            if text.strip():
+                return {
+                    "content_type": "text",
+                    "content": text[:MAX_SOURCE_CHARS],
+                    "extracted_from": "pdf-ocr" if scanned else "pdf",
+                    "note": "Scanned page, read with OCR - text may contain errors."
+                    if scanned
+                    else None,
+                }
+            return {
+                "content_type": "empty",
+                "content": None,
+                "extracted_from": "pdf",
+                "note": "Scanned PDF with no text layer, and OCR is not available here.",
+            }
+    except ImportError as error:
+        # The parser library is missing. Name it, because "install python-docx"
+        # is actionable and "binary source" is not.
+        return {
+            "content_type": "unavailable",
+            "content": None,
+            "extracted_from": suffix.lstrip("."),
+            "note": f"Cannot read {suffix} here: {error}. Install the parser from requirements.txt.",
+        }
+    except Exception as error:  # noqa: BLE001 - a corrupt file must not break the citation
+        logger.warning("Failed to extract %s: %s", path.name, error)
+        return {
+            "content_type": "unavailable",
+            "content": None,
+            "extracted_from": suffix.lstrip("."),
+            "note": f"Could not read this {suffix} file: {error}",
+        }
+
+    return {
+        "content_type": "unsupported",
+        "content": None,
+        "extracted_from": suffix.lstrip("."),
+        "note": f"{suffix} is not a format this viewer renders.",
+    }
+
+
 @app.get("/source")
 def source(filename: str = Query(..., min_length=1, max_length=255)) -> dict:
     """Return the archive file behind a citation, so citations are clickable.
@@ -248,18 +418,8 @@ def source(filename: str = Query(..., min_length=1, max_length=255)) -> dict:
         raise HTTPException(status_code=400, detail="Refusing to read outside the archive")
 
     relative = str(path.relative_to(ARCHIVE_ROOT))
-    if path.suffix.lower() in TEXT_SUFFIXES:
-        return {
-            "filename": safe_name,
-            "path": relative,
-            "content_type": "text",
-            "content": path.read_text(encoding="utf-8", errors="replace")[:MAX_SOURCE_CHARS],
-        }
-
-    return {
-        "filename": safe_name,
-        "path": relative,
-        "content_type": "binary",
-        "content": None,
-        "note": f"{path.suffix} source - open it from the archive at {relative}",
-    }
+    payload = {"filename": safe_name, "path": relative, **_read_source(path)}
+    payload["truncated"] = bool(
+        payload.get("content") and len(payload["content"]) >= MAX_SOURCE_CHARS
+    )
+    return payload

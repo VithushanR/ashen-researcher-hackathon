@@ -23,7 +23,7 @@ not nested inside src/agent/ — import accordingly.
 """
 from agent.state import ResearchState, Evidence, TraceStep
 from agent.router import derive_route
-from agent.planner import plan_first_query, plan_next_query
+from agent.planner import derive_required_claims, plan_first_query, plan_next_query
 from agent.evidence import analyze_evidence
 from agent.sufficiency import check_sufficiency
 from agent.conflict import detect_conflicts, resolve_conflicts
@@ -46,6 +46,7 @@ def research(
     one-line edit at the call site, not a change to this function.
     """
     state = ResearchState(question=question)
+    state.required_claims = derive_required_claims(question)
     query = plan_first_query(question)
     stale_rounds = 0
 
@@ -116,6 +117,7 @@ def research(
                 state.unresolved_claims.append(verdict.missing_info)
             state.confidence = _compute_confidence(state, capped=True)
             state.route = derive_route(state.iteration)
+            _ensure_terminal_gap(state)
             return state
 
         # Next query: if a conflict was just flagged, prioritise a
@@ -144,7 +146,14 @@ def research(
         state.unresolved_claims.append(state.trace[-1].missing)
     state.confidence = _compute_confidence(state, capped=True)
     state.route = derive_route(state.iteration)
+    _ensure_terminal_gap(state)
     return state
+
+
+def _ensure_terminal_gap(state: ResearchState) -> None:
+    """A non-success exit must remain visibly incomplete to downstream consumers."""
+    if not state.unresolved_claims and not any(c.resolved_value is None for c in state.conflicts):
+        state.unresolved_claims.append("Research stopped before sufficiency was established.")
 
 
 def _has_undescribed_image(state: ResearchState) -> bool:

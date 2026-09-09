@@ -162,7 +162,7 @@ def test_each_raw_competing_claim_checks_actual_passage_after_coverage(resolved_
 
     def coverage(prompt):
         calls.append("coverage")
-        return {"coverage": "complete"}
+        return complete_coverage(prompt)
 
     def semantic(prompt):
         payload = json.loads(prompt.split("INPUT DATA:\n", 1)[1])
@@ -313,7 +313,7 @@ def test_combined_independent_fact_and_conflict(resolved, gap, same_chunk):
         captured.append(payload)
         assert payload["ordinary_section"] == output
         assert len(payload["citation_claims"]) == 3
-        return {"coverage": "complete"}
+        return complete_coverage(prompt)
 
     def semantic(prompt):
         payload = json.loads(prompt.split("INPUT DATA:\n", 1)[1])

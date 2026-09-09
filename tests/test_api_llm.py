@@ -63,7 +63,8 @@ def test_real_state_through_api_adapters_and_composer(shared_call):
     shared_call.side_effect = [
         json.dumps({"answer": fact, "citation_claims": [
             {"claim": fact, "chunk_id": "synthetic-1"}]}),
-        json.dumps({"coverage": "complete"}),
+        json.dumps({"coverage": "complete", "presentation": [{
+            "requirement": state.question, "status": "answered", "answer_excerpt": fact}]}),
         json.dumps({"support": "supported", "explicit_absence": "clear"}),
     ]
     answer = pipeline._compose_with_adapters(compose_answer, state)

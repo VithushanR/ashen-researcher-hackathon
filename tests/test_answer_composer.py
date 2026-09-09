@@ -58,7 +58,8 @@ def test_single_evidence_success_and_minimal_prompt():
     synthesize.assert_called_once()
     prompt = synthesize.call_args.args[0]
     payload = json.loads(prompt.split("INPUT DATA:\n", 1)[1])
-    assert payload == {"question": research.question,
+    assert payload == {"question": research.question, "required_claims": [],
+                       "unresolved_claims": [], "conflicts": [],
                        "evidence": [{"chunk_id": item.chunk_id, "text": item.text}]}
     assert result.citations[0]["claim"] != item.text
     assert research.required_claims == []

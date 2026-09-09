@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from src.answer.composer import compose_answer
 from src.answer.coverage_validation import CitationCoverageError, CoverageVerdict
-from tests.answer_helpers import supported_semantics
+from tests.answer_helpers import complete_coverage, supported_semantics
 from tests.test_answer_composer import evidence, state
 from tests.test_answer_conflicts import conflict, research
 from src.answer.semantic_validation import CitationSupportError
@@ -42,11 +42,13 @@ def test_complete_coverage_receives_answer_and_claims_before_semantics():
     def coverage(prompt):
         calls.append("coverage")
         assert data(prompt) == {
+            "question": input_state().question, "required_claims": [], "ordinary_answer": EVENT,
+            "evidence": [{"chunk_id": "event", "text": EVENT}],
             "answer": EVENT, "citation_claims": output()["citation_claims"],
             "research_context": {"unresolved_claims": [], "conflicts": [],
                                  "no_evidence_returned": False},
         }
-        return CoverageVerdict(coverage="complete")
+        return complete_coverage(prompt)
 
     def semantics(prompt):
         calls.append("semantics")
@@ -109,7 +111,7 @@ def test_nonfactual_structural_wording_and_authoritative_gap_need_no_fake_claim(
         assert payload["citation_claims"] == []
         assert "purely non-factual uncertainty wording need no claim" in prompt
         assert "Hedging an actual factual assertion" in prompt
-        return {"coverage": "complete"}
+        return complete_coverage(prompt)
 
     result = compose_answer(
         input_state(unresolved_claims=[gap]),
@@ -128,7 +130,7 @@ def test_explicit_absence_requires_and_accepts_represented_absence_claim():
         assert payload["answer"] == claim
         assert payload["citation_claims"][0]["claim"] == claim
         assert "needs a declared absence claim" in prompt
-        return {"coverage": "complete"}
+        return complete_coverage(prompt)
 
     result = compose_answer(
         state(evidence("absence", text="Hesper: No canonical temperament is established.")),
@@ -177,7 +179,7 @@ def test_adapter_exception_propagates_without_answer():
 
 
 def test_unknown_chunk_still_fails_after_coverage_before_semantics():
-    coverage = Mock(return_value={"coverage": "complete"})
+    coverage = Mock(side_effect=complete_coverage)
     semantics = Mock()
     with pytest.raises(ValueError, match="Unknown synthesis chunk_id: missing"):
         compose_answer(input_state(), synthesize=Mock(return_value=output(
@@ -188,7 +190,7 @@ def test_unknown_chunk_still_fails_after_coverage_before_semantics():
 
 
 def test_coverage_pass_does_not_override_failed_support():
-    coverage = Mock(return_value={"coverage": "complete"})
+    coverage = Mock(side_effect=complete_coverage)
     with pytest.raises(CitationSupportError):
         compose_answer(input_state(), synthesize=Mock(return_value=output()),
                        validate_coverage=coverage, validate_semantics=Mock(return_value={
@@ -203,7 +205,7 @@ def test_no_evidence_gap_answer_still_requires_coverage():
 
 
 def test_no_evidence_report_is_checked_with_authoritative_context():
-    coverage = Mock(return_value={"coverage": "complete"})
+    coverage = Mock(side_effect=complete_coverage)
     result = compose_answer(state(unresolved_claims=["Unknown date."]),
                             synthesize=Mock(), validate_coverage=coverage)
     payload = data(coverage.call_args.args[0])
@@ -215,7 +217,7 @@ def test_no_evidence_report_is_checked_with_authoritative_context():
 @pytest.mark.parametrize("resolved_value", ["green", None])
 def test_conflict_report_coverage_preserves_upstream_decisions(resolved_value):
     supplied = conflict(resolved_value=resolved_value)
-    coverage = Mock(return_value={"coverage": "complete"})
+    coverage = Mock(side_effect=complete_coverage)
     synthesize = Mock(return_value={"answer": None, "citation_claims": []})
     semantics = Mock(side_effect=supported_semantics)
     result = compose_answer(research(supplied), synthesize=synthesize,

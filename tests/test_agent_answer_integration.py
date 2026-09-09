@@ -10,7 +10,7 @@ from agent.loop import research
 from agent.state import ClaimSource, Conflict, Evidence, ResearchState, TraceStep
 from src.answer.composer import compose_answer
 from tests.answer_helpers import complete_coverage, supported_semantics
-from tests.test_agent_loop import _no_conflicts_response, _sufficiency_response
+from tests.test_agent_loop import _no_conflicts_response, _sufficiency_response, _with_requirements
 
 
 def chunk(cid, text, **changes):
@@ -34,7 +34,7 @@ def block_unexpected_external_calls(monkeypatch):
 def configure_b(monkeypatch, verdicts, conflicts=None):
     checker = Mock(side_effect=verdicts)
     detector = Mock(return_value=json.dumps(conflicts) if conflicts else _no_conflicts_response())
-    monkeypatch.setattr("agent.sufficiency.call_llm", checker)
+    monkeypatch.setattr("agent.sufficiency.call_llm", lambda prompt: _with_requirements(checker(prompt), prompt))
     monkeypatch.setattr("agent.conflict.call_llm", detector)
     return checker, detector
 
@@ -70,7 +70,15 @@ def handoff(state, fact, cid):
     assert result.iterations_used == state.iteration
     synthesize.assert_called_once()
     coverage.assert_called_once()
-    assert json.loads(coverage.call_args.args[0].split("INPUT DATA:\n", 1)[1])["answer"] == result.answer
+    synthesis_input = json.loads(synthesize.call_args.args[0].split("INPUT DATA:\n", 1)[1])
+    coverage_input = json.loads(coverage.call_args.args[0].split("INPUT DATA:\n", 1)[1])
+    assert coverage_input["answer"] == result.answer
+    for payload in (synthesis_input, coverage_input):
+        assert payload["required_claims"] == state.required_claims
+        assert payload["question"] == state.question
+        assert payload["evidence"] == [{"chunk_id": item.chunk_id, "text": item.text}
+                                       for item in state.evidence]
+    assert coverage_input["research_context"]["unresolved_claims"] == state.unresolved_claims
     assert checked[0] == (fact, cid, False)
     item = evidence_by_id[cid]
     assert result.citations[0] == dict(claim=fact, filename=item.filename, page=item.page,
@@ -84,7 +92,7 @@ def test_clean_research_state_handoff(monkeypatch):
     search = Mock(return_value=[chunk("gate", fact, filename="synthetic.pdf", page=7)])
     state = research("What color is the synthetic gate?", search_fn=search)
     assert state.trace[-1].verdict == "sufficient"
-    assert state.required_claims == []
+    assert state.required_claims == [state.question]
     result, checked = handoff(state, fact, "gate")
     assert result.status == "complete"
     assert result.answer == fact
@@ -167,3 +175,11 @@ def test_real_vision_fallback_evidence_handoff(monkeypatch):
     assert result.citations[0]["filename"] == "synthetic_banner.png"
     assert result.citations[0]["source_type"] == "image_derived"
     assert len(checked) == 1
+
+
+@pytest.fixture(autouse=True)
+def mock_requirement_model(monkeypatch):
+    def respond(prompt):
+        question = json.loads(prompt.split("QUESTION DATA:\n", 1)[1])
+        return json.dumps({"required_claims": [question]})
+    monkeypatch.setattr("agent.planner.call_llm", respond)

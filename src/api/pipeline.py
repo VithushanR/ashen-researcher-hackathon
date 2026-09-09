@@ -314,6 +314,34 @@ def _compose_with_adapters(compose: Callable, state: Any) -> Any:
     )
 
 
+def _is_grounding_rejection(error: BaseException) -> bool:
+    """Did Person C's quality gate refuse the answer, or did something break?
+
+    ``CitationCoverageError`` and ``CitationSupportError`` are not failures of
+    the system. They are the system working: the composer synthesised an answer,
+    checked it against the evidence, found it unsupported or incomplete, and
+    refused to present it. That refusal is the entire point of sub-track 1C, and
+    turning it into an HTTP 500 would show a judge a stack trace at the exact
+    moment the system did the right thing.
+
+    Matched by class name rather than by importing the classes, for the same
+    reason everything else at this seam is late-bound: importing Person C's
+    module here at module scope would make the API refuse to boot whenever their
+    branch is mid-merge. Both are ValueError subclasses, so an isinstance check
+    against ValueError would also swallow genuine bugs.
+    """
+    return type(error).__name__ in {"CitationCoverageError", "CitationSupportError"}
+
+
+class GroundingRejected(RuntimeError):
+    """The composer refused to present its own answer. Carries the trace."""
+
+    def __init__(self, reason: str, state: Any) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.state = state
+
+
 def _field(state: Any, name: str, default: Any) -> Any:
     """Read a field from a Pydantic state or a plain dict, whichever we get."""
     value = state.get(name) if isinstance(state, dict) else getattr(state, name, None)
@@ -370,12 +398,56 @@ def _real_answer(
         kwargs["on_step"] = on_step
 
     state = research(question, **kwargs)
-    return _to_payload(state, _compose_with_adapters(compose, state), question)
+    try:
+        composed = _compose_with_adapters(compose, state)
+    except Exception as error:  # noqa: BLE001 - re-raised below unless it is a rejection
+        if _is_grounding_rejection(error):
+            raise GroundingRejected(str(error), state) from error
+        raise
+    return _to_payload(state, composed, question)
 
 
 # ---------------------------------------------------------------------------
 # Public entry points
 # ---------------------------------------------------------------------------
+
+def _rejected_payload(question: str, error: "GroundingRejected") -> dict[str, Any]:
+    """An honest response for an answer the composer refused to stand behind.
+
+    Not a 500 and not a silent fall back to fixtures. Both would misrepresent
+    what happened: the research ran, the evidence was gathered, and the answer
+    failed its own grounding check. So the trace is preserved -- a judge can see
+    every round the agent performed -- and the gap is stated in the words of the
+    validator that raised it.
+
+    ``partial_gap_stated`` is the correct status. The system has something to
+    say about the question and cannot support a full answer, which is precisely
+    what that state means.
+    """
+    return {
+        "question": question,
+        "answer": (
+            "The research ran, but the composed answer did not pass this system's "
+            "own grounding check, so it is not being presented as fact.\n\n"
+            f"The check that refused it: {error.reason}\n\n"
+            "The research trace below shows what was searched and found. Stating "
+            "this is deliberate -- presenting an answer the system could not "
+            "ground would be the failure this project exists to avoid."
+        ),
+        "status": "partial_gap_stated",
+        "confidence": 0,
+        "citations": [],
+        "conflicts": [_as_dict(c) for c in _field(error.state, "conflicts", [])],
+        "unresolved_claims": (
+            list(_field(error.state, "unresolved_claims", []))
+            + [f"Answer withheld by the grounding check: {error.reason}"]
+        ),
+        "iterations_used": _field(error.state, "iteration", 0),
+        "route": _field(error.state, "route", None),
+        "trace": [_as_dict(step) for step in _field(error.state, "trace", [])],
+        "is_stub": False,
+    }
+
 
 def answer_question(question: str, *, baseline: bool = False) -> dict[str, Any]:
     """Answer one question. The non-streaming path behind ``POST /ask``."""
@@ -400,7 +472,11 @@ def answer_question(question: str, *, baseline: bool = False) -> dict[str, Any]:
         logger.info("Real pipeline not ready - serving fixture stub")
         return normalise_response(_stub_answer(question))
 
-    return normalise_response(_real_answer(question, research, compose))
+    try:
+        return normalise_response(_real_answer(question, research, compose))
+    except GroundingRejected as rejection:
+        logger.info("Composer refused its own answer: %s", rejection.reason)
+        return normalise_response(_rejected_payload(question, rejection))
 
 
 def _baseline_answer(question: str) -> dict[str, Any]:
@@ -528,6 +604,9 @@ def stream_question(question: str, *, baseline: bool = False) -> Iterator[dict[s
     # live -- /health reports this as "replayed".
     try:
         payload = normalise_response(_real_answer(question, research, compose))
+    except GroundingRejected as rejection:
+        logger.info("Composer refused its own answer: %s", rejection.reason)
+        payload = normalise_response(_rejected_payload(question, rejection))
     except Exception as error:  # noqa: BLE001 - a demo must never show a traceback
         logger.exception("Pipeline failed")
         yield {"event": "error", "message": str(error)}
@@ -560,6 +639,9 @@ def _stream_live(question: str, research: Callable, compose: Callable) -> Iterat
             result["payload"] = normalise_response(
                 _real_answer(question, research, compose, on_step=on_step)
             )
+        except GroundingRejected as rejection:
+            logger.info("Composer refused its own answer: %s", rejection.reason)
+            result["payload"] = normalise_response(_rejected_payload(question, rejection))
         except Exception as error:  # noqa: BLE001
             logger.exception("Pipeline failed")
             result["error"] = str(error)

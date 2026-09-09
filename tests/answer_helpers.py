@@ -12,4 +12,16 @@ def supported_semantics(prompt):
 
 def complete_coverage(prompt):
     """Assume coverage only in existing tests focused on other behavior."""
-    return {"coverage": "complete"}
+    import json
+
+    payload = json.loads(prompt.split("INPUT DATA:\n", 1)[1])
+    context = payload["research_context"]
+    status = "conflict" if context["conflicts"] else (
+        "gap" if context["unresolved_claims"] else "answered")
+    return {"coverage": "complete", "presentation": [
+        {"requirement": requirement, "status": status, "answer_excerpt": payload["answer"],
+         "citation_claim_indices": list(range(len(payload["citation_claims"]))) if status == "answered" else [],
+         "gap_indices": [0] if status == "gap" else [],
+         "conflict_indices": [0] if status == "conflict" else []}
+        for requirement in payload["required_claims"] or [payload["question"]]
+    ]}

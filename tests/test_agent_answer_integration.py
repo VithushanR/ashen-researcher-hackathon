@@ -70,7 +70,15 @@ def handoff(state, fact, cid):
     assert result.iterations_used == state.iteration
     synthesize.assert_called_once()
     coverage.assert_called_once()
-    assert json.loads(coverage.call_args.args[0].split("INPUT DATA:\n", 1)[1])["answer"] == result.answer
+    synthesis_input = json.loads(synthesize.call_args.args[0].split("INPUT DATA:\n", 1)[1])
+    coverage_input = json.loads(coverage.call_args.args[0].split("INPUT DATA:\n", 1)[1])
+    assert coverage_input["answer"] == result.answer
+    for payload in (synthesis_input, coverage_input):
+        assert payload["required_claims"] == state.required_claims
+        assert payload["question"] == state.question
+        assert payload["evidence"] == [{"chunk_id": item.chunk_id, "text": item.text}
+                                       for item in state.evidence]
+    assert coverage_input["research_context"]["unresolved_claims"] == state.unresolved_claims
     assert checked[0] == (fact, cid, False)
     item = evidence_by_id[cid]
     assert result.citations[0] == dict(claim=fact, filename=item.filename, page=item.page,

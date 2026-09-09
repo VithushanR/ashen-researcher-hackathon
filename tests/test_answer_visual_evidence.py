@@ -56,7 +56,7 @@ def test_vision_complete_uses_original_image_metadata_and_preserves_input(page, 
     def coverage(prompt):
         calls.append("coverage")
         assert data(prompt)["citation_claims"][0]["chunk_id"] == derived.chunk_id
-        return {"coverage": "complete"}
+        return complete_coverage(prompt)
 
     def semantic(prompt):
         calls.append("semantic")

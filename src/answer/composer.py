@@ -5,12 +5,15 @@ from typing import TYPE_CHECKING
 
 from .models import ComposedAnswer
 from .conflicts import build_conflict_presentation
-from .coverage_validation import validate_answer_coverage
+from .coverage_validation import PresentationCompletenessError, validate_answer_coverage
 from .semantic_validation import validate_citation_claim
 from .synthesis import CitationClaim, OrdinarySectionResult, PartialSynthesisResult, SynthesisResult, build_synthesis_prompt
 
 if TYPE_CHECKING:
     from ..agent.state import ResearchState
+
+
+MAX_COMPOSITION_REPAIRS = 1
 
 
 def compose_answer(
@@ -31,6 +34,8 @@ def compose_answer(
     wiring, rejected claims, and malformed verdicts fail before returning an answer.
     Every final answer also requires injected coverage validation, including
     answers with no generated claims and deterministic conflict/gap reports.
+    A clear independent presentation omission permits one synthesis repair using
+    the same research. Other failures propagate; no research is performed here.
     """
     if not state.evidence:
         if state.unresolved_claims and not state.conflicts:
@@ -38,6 +43,7 @@ def compose_answer(
             validate_answer_coverage(
                 answer, [], validate_coverage=validate_coverage,
                 unresolved_claims=state.unresolved_claims, no_evidence_returned=True,
+                question=state.question, required_claims=state.required_claims, evidence=[],
             )
             return ComposedAnswer(
                 question=state.question,
@@ -57,38 +63,50 @@ def compose_answer(
     conflicts = presentation.conflicts if presentation else []
     conflict_citations = presentation.citations if presentation else []
 
-    prompt = build_synthesis_prompt(
-        state.question,
-        [{"chunk_id": item.chunk_id, "text": item.text} for item in state.evidence],
-        unresolved_claims=state.unresolved_claims, conflicts=conflicts,
-    )
+    evidence_context = [{"chunk_id": item.chunk_id, "text": item.text} for item in state.evidence]
     result_type = PartialSynthesisResult if state.unresolved_claims else SynthesisResult
     if presentation:
         result_type = OrdinarySectionResult
-    raw_result = synthesize(prompt)
-    # Revalidate instances and subclasses against the schema selected by the state.
-    if isinstance(raw_result, (SynthesisResult, OrdinarySectionResult)):
-        raw_result = raw_result.model_dump()
-    synthesis = result_type.model_validate(raw_result)
-    sections = [synthesis.answer] if synthesis.answer is not None else []
-    if presentation:
-        sections.append(presentation.answer)
-    if state.unresolved_claims:
-        sections.append(_format_gaps(state.unresolved_claims))
-    answer = "\n\n".join(sections)
-    combined_claims = list(synthesis.citation_claims) + [
-        CitationClaim(claim=item.attributed_claim, chunk_id=item.chunk_id)
-        for item in conflict_citations
-    ]
-    validate_answer_coverage(
-        answer, combined_claims, validate_coverage=validate_coverage,
-        unresolved_claims=state.unresolved_claims, conflicts=conflicts,
-        ordinary_section=synthesis if presentation else None,
-    )
-    # Resolve every ID before any semantic calls; never fabricate source metadata.
-    for reference in synthesis.citation_claims:
-        if reference.chunk_id not in evidence_by_id:
-            raise ValueError(f"Unknown synthesis chunk_id: {reference.chunk_id}")
+    repair_feedback = None
+    for attempt in range(MAX_COMPOSITION_REPAIRS + 1):
+        prompt = build_synthesis_prompt(
+            state.question, evidence_context, required_claims=state.required_claims,
+            unresolved_claims=state.unresolved_claims, conflicts=conflicts,
+            repair_feedback=repair_feedback,
+        )
+        raw_result = synthesize(prompt)
+        # Revalidate instances and subclasses against the schema selected by the state.
+        if isinstance(raw_result, (SynthesisResult, OrdinarySectionResult)):
+            raw_result = raw_result.model_dump()
+        synthesis = result_type.model_validate(raw_result)
+        sections = [synthesis.answer] if synthesis.answer is not None else []
+        if presentation:
+            sections.append(presentation.answer)
+        if state.unresolved_claims:
+            sections.append(_format_gaps(state.unresolved_claims))
+        answer = "\n\n".join(sections)
+        combined_claims = list(synthesis.citation_claims) + [
+            CitationClaim(claim=item.attributed_claim, chunk_id=item.chunk_id)
+            for item in conflict_citations
+        ]
+        try:
+            validate_answer_coverage(
+                answer, combined_claims, validate_coverage=validate_coverage,
+                unresolved_claims=state.unresolved_claims, conflicts=conflicts,
+                ordinary_section=synthesis if presentation else None,
+                ordinary_answer=synthesis.answer,
+                question=state.question, required_claims=state.required_claims,
+                evidence=evidence_context,
+            )
+        except PresentationCompletenessError as error:
+            # An unknown ID is never a reason to repair, including a discarded draft.
+            _check_chunk_ids(synthesis.citation_claims, evidence_by_id)
+            if not error.repairable or attempt == MAX_COMPOSITION_REPAIRS:
+                raise
+            repair_feedback = error.omissions
+            continue
+        _check_chunk_ids(synthesis.citation_claims, evidence_by_id)
+        break
     if combined_claims and validate_semantics is None:
         raise ValueError("A semantic-validation adapter is required for generated citation claims")
     for reference in synthesis.citation_claims:
@@ -131,3 +149,10 @@ def _format_gaps(unresolved_claims: list[str]) -> str:
     return "Unresolved information (not established by research):\n" + "\n".join(
         f"- {gap}" for gap in unresolved_claims
     )
+
+
+def _check_chunk_ids(claims: list[CitationClaim], evidence_by_id: dict) -> None:
+    """Resolve every ID before semantic calls or permission to repair."""
+    for reference in claims:
+        if reference.chunk_id not in evidence_by_id:
+            raise ValueError(f"Unknown synthesis chunk_id: {reference.chunk_id}")

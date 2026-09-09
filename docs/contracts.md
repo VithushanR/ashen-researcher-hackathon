@@ -108,12 +108,32 @@ Supported status values are:
 - `complete`
 - `complete_with_conflict`
 - `partial_gap_stated`
+- `partial_validation_limited`
+
+`partial_validation_limited` means ordinary generated statements were withheld
+after expected C semantic validation failures. It does not assert that B lacked
+evidence and does not add entries to `ResearchState.unresolved_claims`. Validated
+claim/reference pairs are preserved exactly; final citations use Evidence metadata.
+The answer reports C validation limitations separately from B gaps and conflicts.
+
+Existing B gaps or unresolved conflicts retain `partial_gap_stated`, even when
+C limitations also occur; both causes are stated separately. Otherwise C limitations
+take precedence over `complete`/`complete_with_conflict`. Without C limitations,
+existing status selection is unchanged. Failed conflict attribution, malformed
+responses and system errors still fail closed.
+
+There is no synthesis recovery call. When ordinary statements are withheld, C
+reconstructs the answer from validated claims and runs one final coverage check
+outside the existing bounded completeness-repair loop. Intentional withholding
+uses trusted C limitation context, never a fabricated B gap. The new status is
+accepted by `ComposedAnswer`, API `AnswerStatus` and the UI status badge; no other
+public field changes. The API continues to carry genuine B gaps independently.
 
 This structured result gives Person D's API and UI the answer text, status,
 confidence, structured citations, conflict details, and iterations used.
 The citations support clickable source references; the conflicts support
 conflict callouts and preserve the multi-claim structure above as dictionaries.
-Rules for selecting a status are not defined by this update.
+Status precedence for validation limitations is defined above; B gap and conflict decisions remain authoritative.
 
 ### Citation dictionaries
 

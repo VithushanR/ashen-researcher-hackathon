@@ -202,7 +202,7 @@ def test_empty_checklist_question_fallback_no_persisted_decomposition():
 
 
 @pytest.mark.parametrize("bad_kind", ["unknown", "unsupported", "unchecked_model"])
-def test_invalid_repaired_answer_still_fails(bad_kind):
+def test_invalid_repaired_claim_never_enters_final_answer(bad_kind):
     repaired = draft()
     if bad_kind == "unknown":
         repaired["citation_claims"][2]["chunk_id"] = "invented"
@@ -217,6 +217,13 @@ def test_invalid_repaired_answer_still_fails(bad_kind):
         # Explicitly isolate downstream validation: first verdict triggers repair,
         # second accepts presentation so it cannot mask a chunk/semantic failure.
         payload = data(prompt)
+        if "validation_limitations" in payload["research_context"]:
+            from tests.answer_helpers import complete_coverage
+            result = complete_coverage(prompt)
+            for i in range(2):
+                result["presentation"][i] = dict(requirement=REQUIREMENTS[i], status="answered",
+                    answer_excerpt=FACTS[i], citation_claim_indices=[i])
+            return result
         if payload["answer"] == draft(2)["answer"]:
             return literal_coverage(prompt)
         return {"coverage": "complete", "presentation": [dict(
@@ -226,9 +233,16 @@ def test_invalid_repaired_answer_still_fails(bad_kind):
     expected_error = {"unknown": ValueError, "unsupported": CitationSupportError,
                       "unchecked_model": ValidationError}[bad_kind]
     semantics = Mock(side_effect=literal_semantics)
-    with pytest.raises(expected_error) as caught:
-        compose_answer(prepared_state(), synthesize=synthesis, validate_coverage=coverage,
+    if bad_kind == "unsupported":
+        result = compose_answer(prepared_state(), synthesize=synthesis, validate_coverage=coverage,
                        validate_semantics=semantics)
+        assert result.status == "partial_validation_limited"
+        assert "cheese" not in result.answer
+        assert [item["claim"] for item in result.citations] == FACTS[:2]
+    else:
+        with pytest.raises(expected_error) as caught:
+            compose_answer(prepared_state(), synthesize=synthesis, validate_coverage=coverage,
+                           validate_semantics=semantics)
     assert synthesis.call_count == 2
     if bad_kind == "unknown":
         assert "Unknown synthesis chunk_id: invented" in str(caught.value)

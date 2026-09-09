@@ -42,6 +42,7 @@ SOURCE_TYPE_TIERS: dict[str, str] = {
 }
 
 STATUS_STYLES: dict[str, tuple[str, str]] = {
+    "partial_validation_limited": ("Partial — validation limited", "#a33a3a"),
     "complete": ("Complete", "#1f7a4d"),
     "complete_with_conflict": ("Conflict resolved", "#9a6a1f"),
     "partial_gap_stated": ("Partial — gap stated", "#a33a3a"),

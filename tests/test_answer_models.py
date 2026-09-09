@@ -22,7 +22,7 @@ def answer_payload():
 
 
 @pytest.mark.parametrize(
-    "status", ["complete", "complete_with_conflict", "partial_gap_stated"]
+    "status", ["complete", "complete_with_conflict", "partial_gap_stated", "partial_validation_limited"]
 )
 def test_supported_statuses_serialize(answer_payload, status):
     answer_payload["status"] = status

@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -25,21 +26,30 @@ class CoverageVerdict(BaseModel):
         return self
 
 
+@dataclass(frozen=True)
+class ValidationLimitation:
+    """Trusted C outcome; never synthesized evidence or a Person B research gap."""
+
+    requirement_indices: tuple[int, ...]
+    message: str
+
+
 class PresentationAssessment(BaseModel):
     """One presentation check, not a new B research assessment."""
 
     model_config = ConfigDict(extra="forbid", strict=True, revalidate_instances="always")
     requirement: str = Field(min_length=1)
-    status: Literal["answered", "gap", "conflict", "omitted", "uncertain"]
+    status: Literal["answered", "gap", "conflict", "omitted", "uncertain", "validation_limited"]
     answer_excerpt: str | None = None
     evidence_ids: list[str] = Field(default_factory=list)
     citation_claim_indices: list[int] = Field(default_factory=list)
     gap_indices: list[int] = Field(default_factory=list)
     conflict_indices: list[int] = Field(default_factory=list)
+    limitation_indices: list[int] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def consistent_assessment(self):
-        if self.status in {"answered", "gap", "conflict"}:
+        if self.status in {"answered", "gap", "conflict", "validation_limited"}:
             if not self.answer_excerpt or not self.answer_excerpt.strip():
                 raise ValueError("Represented requirements need an answer excerpt")
         elif self.answer_excerpt is not None:
@@ -53,6 +63,23 @@ class PresentationCoverageVerdict(CoverageVerdict):
     """Required runtime extension; legacy offline coverage records remain valid."""
 
     presentation: list[PresentationAssessment] = Field(min_length=1)
+
+
+_COVERAGE_OUTPUT_EXAMPLE = {
+    "coverage": "complete",
+    "uncovered_claims": [],
+    "reason": None,
+    "presentation": [{
+        "requirement": "exact supplied requirement or fallback question",
+        "status": "answered",
+        "answer_excerpt": "exact nonempty substring of the final answer",
+        "evidence_ids": [],
+        "citation_claim_indices": [0],
+        "gap_indices": [],
+        "conflict_indices": [],
+        "limitation_indices": [],
+    }],
+}
 
 
 class CitationCoverageError(ValueError):
@@ -87,6 +114,8 @@ def validate_answer_coverage(
     ordinary_section: OrdinarySectionResult | None = None,
     question: str, required_claims: list[str], evidence: list[dict[str, str]],
     ordinary_answer: str | None = None,
+    validation_limitations: list[ValidationLimitation] | None = None,
+    preserved_requirement_claims: list[list[int]] | None = None,
 ) -> PresentationCoverageVerdict:
     """Require coverage for all factual ideas, including undeclared inferences.
 
@@ -133,10 +162,9 @@ Return incomplete for any uncovered factual idea, uncertain if coverage cannot
 be determined, and complete only when all factual ideas are covered as above.
 This is coverage, not a support check: do not look up chunk IDs, judge the truth
 of declared claims, invent evidence, rewrite the answer, or delete text.
-Return structured JSON only, with these base fields AND presentation below:
-{"coverage": "complete|incomplete|uncertain", "uncovered_claims": [], "reason": null}
-uncovered_claims is an optional list of strings naming omitted factual ideas.
-reason is an optional string or null. Complete must have no uncovered claims.
+coverage must be complete, incomplete, or uncertain. uncovered_claims is a list
+of strings naming uncovered factual ideas. reason is a string or null. Complete
+must have no uncovered claims.
 
 INPUT DATA:
 """
@@ -158,12 +186,9 @@ INPUT DATA:
 Check every required_claims item in original order, exactly once. If empty, return
 one assessment with requirement equal to the original question, checking ALL its
 parts without generating a second checklist. This is presentation, NOT sufficiency.
-Return a required presentation array in addition to coverage/uncovered_claims/reason:
-[{"requirement": "exact supplied requirement or fallback question",
-  "status": "answered|gap|conflict|omitted|uncertain",
-  "answer_excerpt": "exact nonempty substring of final answer or null",
-  "evidence_ids": [], "citation_claim_indices": [],
-  "gap_indices": [], "conflict_indices": []}].
+Return a required presentation assessment for every expected requirement.
+Its status must be answered, gap, conflict, omitted, uncertain, or
+validation_limited. The other presentation fields are described below.
 For a populated checklist, answered MUST give zero-based citation_claim_indices
 into existing citation_claims, restricted to the ordinary synthesis claims (the
 ordinary_section prefix when conflicts exist). Include the referenced atomic
@@ -210,23 +235,75 @@ INPUT DATA:
     }
     if ordinary_section is not None:
         payload["ordinary_section"] = ordinary_section.model_dump()
+    if validation_limitations:
+        instructions = instructions.replace("INPUT DATA:\n", """C validation limitations:
+The final answer was reconstructed from individually validated claims. The trusted
+validation_limitations below describe intentionally withheld statements, NOT B
+research gaps and NOT evidence. Their faithful reporting requires no citation.
+Do not fill these limitations, reclassify them as B gaps/conflicts, or request
+synthesis repair. Every limitation message must remain present in the final answer.
+A requirement affected by a limitation may use status validation_limited and
+limitation_indices (zero-based references into validation_limitations); it may
+still be answered if its remaining validated claims fully answer it. Preserve all
+supported parts. Unmapped limitations do not establish a requirement mapping.
+When required_claims is empty, assess the original question and the faithful
+limitation report without inventing a checklist. No factual claims is legitimate
+when all ordinary statements were withheld; do not invent a no-evidence finding.
+Existing citation coverage, B conflict separation, and atomic mapping rules remain.
+For answered requirements, use only preserved_requirement_claims for that
+requirement: already validated claims cannot be reassigned to different needs.
+A remaining accidental omission still fails; withholding is allowed only when
+linked to this trusted C context. Do not copy any withheld assertion as fact.
+
+INPUT DATA:
+""")
+        payload["research_context"]["validation_limitations"] = [asdict(item) for item in validation_limitations]
+        payload["preserved_requirement_claims"] = preserved_requirement_claims
+    instructions = instructions.replace("INPUT DATA:\n", """OUTPUT CONTRACT:
+Return one JSON object only. Return ONLY the documented output keys shown in the
+complete example below. Do not echo question, required_claims, evidence,
+conflicts, or unresolved_claims. Do not include Markdown, prose, explanations,
+or any text outside the JSON object.
+
+""" + json.dumps(_COVERAGE_OUTPUT_EXAMPLE, ensure_ascii=False, indent=2) + """
+
+Every presentation object must use exactly the fields shown. Populate arrays
+according to the status rules above; use empty arrays when a reference type does
+not apply. Use null for an absent answer_excerpt or reason.
+
+INPUT DATA:
+""")
     prompt = instructions + json.dumps(payload, ensure_ascii=False)
     raw = validate_coverage(prompt)
-    if isinstance(raw, CoverageVerdict):
+    if isinstance(raw, PresentationCoverageVerdict):
         raw = raw.model_dump()
-    # Reject existing coverage failures before considering any repair.
-    # The extended schema is mandatory even with an empty B checklist.
-    base_data = ({key: value for key, value in raw.items() if key != "presentation"}
-                 if isinstance(raw, dict) else raw)
-    base = CoverageVerdict.model_validate(base_data)
-    if base.coverage != "complete":
-        raise CitationCoverageError(answer, base)
+    # One strict runtime schema is authoritative for every coverage outcome.
+    # Missing presentation data and echoed input fields therefore fail closed.
     verdict = PresentationCoverageVerdict.model_validate(raw)
+    if verdict.coverage != "complete":
+        raise CitationCoverageError(answer, verdict)
     expected = required_claims or [question]
     if [item.requirement for item in verdict.presentation] != expected:
         raise ValueError("Presentation assessments must match the full checklist in order")
     known_ids = {item["chunk_id"] for item in evidence}
-    for item in verdict.presentation:
+    for limitation in validation_limitations or []:
+        if limitation.message not in answer:
+            raise ValueError("C validation limitation report missing from final answer")
+    for requirement_index, item in enumerate(verdict.presentation):
+        if item.status == "validation_limited":
+            indices = item.limitation_indices
+            if not indices or len(set(indices)) != len(indices):
+                raise ValueError("Validation-limited assessment requires unique limitation references")
+            if any(i < 0 or i >= len(validation_limitations or []) for i in indices):
+                raise ValueError("Unknown C validation limitation")
+            if required_claims and any(requirement_index not in validation_limitations[i].requirement_indices
+                                       for i in indices):
+                raise ValueError("Limitation does not belong to this requirement")
+        elif item.limitation_indices:
+            raise ValueError("Unexpected limitation references")
+        if item.status == "answered" and preserved_requirement_claims is not None and required_claims:
+            if not set(item.citation_claim_indices).issubset(preserved_requirement_claims[requirement_index]):
+                raise ValueError("Preserved claims cannot be reassigned to another requirement")
         if any(chunk_id not in known_ids for chunk_id in item.evidence_ids):
             raise ValueError("Unknown presentation evidence reference")
         if item.answer_excerpt is not None and item.answer_excerpt not in answer:

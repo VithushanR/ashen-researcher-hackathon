@@ -224,7 +224,11 @@ def test_conflict_semantic_exception_propagates():
 @pytest.mark.parametrize("failure", ["unknown", "duplicate", "coverage"])
 def test_conflict_prechecks_prevent_semantic_calls(failure):
     input_state = research(conflict())
-    coverage = Mock(return_value={"coverage": "incomplete" if failure == "coverage" else "complete"})
+    def coverage_result(prompt):
+        result = complete_coverage(prompt)
+        result["coverage"] = "incomplete" if failure == "coverage" else "complete"
+        return result
+    coverage = Mock(side_effect=coverage_result)
     if failure == "unknown":
         input_state.conflicts[0].claims[-1].chunk_id = "invented"
     elif failure == "duplicate":
@@ -350,7 +354,9 @@ def test_ordinary_overlap_or_repeated_gap_rejects_before_semantics(claim):
         assert "ordinary_section" in prompt
         assert "must not excuse disputed assertions in ordinary_section" in prompt
         assert "must not repeat B's gap report" in prompt
-        return {"coverage": "incomplete", "reason": "Ordinary section violates separation."}
+        result = complete_coverage(prompt)
+        result.update(coverage="incomplete", reason="Ordinary section violates separation.")
+        return result
 
     with pytest.raises(CitationCoverageError):
         compose_answer(input_state, synthesize=Mock(return_value={"answer": claim,
@@ -360,7 +366,7 @@ def test_ordinary_overlap_or_repeated_gap_rejects_before_semantics(claim):
 
 
 @pytest.mark.parametrize("failing_group", ["ordinary", "conflict"])
-def test_combined_semantic_failure_aborts(failing_group):
+def test_only_ordinary_semantic_failure_allows_preservation(failing_group):
     fact = "Orin owns the gate."
     input_state = research(conflict())
     input_state.evidence.append(evidence("owner", text=fact))
@@ -370,10 +376,19 @@ def test_combined_semantic_failure_aborts(failing_group):
         return {"support": "unsupported" if group == failing_group else "supported",
                 "explicit_absence": "clear"}
 
-    with pytest.raises(CitationSupportError):
-        compose_answer(input_state, synthesize=Mock(return_value={"answer": fact,
+    def compose():
+        return compose_answer(input_state, synthesize=Mock(return_value={"answer": fact,
             "citation_claims": [{"claim": fact, "chunk_id": "owner"}]}),
             validate_coverage=complete_coverage, validate_semantics=validator)
+    if failing_group == "conflict":
+        with pytest.raises(CitationSupportError):
+            compose()
+    else:
+        result = compose()
+        assert fact not in result.answer
+        assert len(result.citations) == 2
+        assert result.conflicts[0]["resolved_value"] == "green"
+        assert result.status == "partial_validation_limited"
 
 
 def test_independent_absence_is_included_with_conflict():

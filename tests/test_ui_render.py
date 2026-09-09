@@ -282,7 +282,8 @@ def test_confidence_bands(confidence: int, expected: str) -> None:
     ("status", "expected"),
     [("complete", "Complete"),
      ("complete_with_conflict", "Conflict resolved"),
-     ("partial_gap_stated", "Partial — gap stated")],
+     ("partial_gap_stated", "Partial — gap stated"),
+     ("partial_validation_limited", "Partial — validation limited")],
 )
 def test_known_statuses(status: str, expected: str) -> None:
     assert status_badge(status)[0] == expected

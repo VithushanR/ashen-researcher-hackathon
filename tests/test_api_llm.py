@@ -92,10 +92,10 @@ def test_coverage_adapter_does_not_remove_unknown_output_fields(shared_call):
 @pytest.mark.parametrize("override", [False, True])
 def test_shared_model_configuration(monkeypatch, override):
     expected = {}
-    for role, default in [("FAST", "google/gemma-4-26b-a4b-it:free"),
-                          ("SYNTHESIS", "google/gemma-4-31b-it:free"),
-                          ("VISION", "google/gemma-4-31b-it:free")]:
-        variable = f"OPENROUTER_{role}_MODEL"
+    for role, default in [("FAST", "gemini-2.5-flash"),
+                          ("SYNTHESIS", "gemini-2.5-flash"),
+                          ("VISION", "gemini-2.5-flash")]:
+        variable = f"GEMINI_{role}_MODEL"
         monkeypatch.delenv(variable, raising=False)
         expected[f"{role}_MODEL"] = default
         if override:

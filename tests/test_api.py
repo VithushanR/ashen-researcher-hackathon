@@ -109,8 +109,8 @@ REAL_ARCHIVE_ONLY_QUESTION = (
 )
 
 archive_pipeline_ready = pytest.mark.skipif(
-    not os.getenv("VOYAGE_API_KEY") or not os.getenv("OPENROUTER_API_KEY"),
-    reason="VOYAGE_API_KEY/OPENROUTER_API_KEY not set; cannot exercise the real retrieval pipeline",
+    not os.getenv("VOYAGE_API_KEY") or not os.getenv("GEMINI_API_KEY"),
+    reason="VOYAGE_API_KEY/GEMINI_API_KEY not set; cannot exercise the real retrieval pipeline",
 )
 
 

@@ -25,10 +25,17 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# The statuses Person C's ComposedAnswer is allowed to emit (docs/contracts.md).
-# Kept as a Literal on purpose: this one really is a closed set, and an unknown
-# status means C's contract changed and we need to know immediately.
-AnswerStatus = Literal["complete", "complete_with_conflict", "partial_gap_stated", "partial_validation_limited"]
+# The statuses Person C's ComposedAnswer is allowed to emit (docs/contracts.md),
+# plus "composition_failed" -- not one of C's, but Person D's own honest label
+# for when research succeeded and composition exhausted every retry without
+# ever producing one of the four real statuses below (see pipeline.py's
+# _degraded_payload). Kept as a Literal on purpose: this one really is a
+# closed set, and an unknown status means C's contract changed and we need to
+# know immediately.
+AnswerStatus = Literal[
+    "complete", "complete_with_conflict", "partial_gap_stated", "partial_validation_limited",
+    "composition_failed",
+]
 
 
 class Citation(BaseModel):
@@ -137,6 +144,13 @@ class AskResponse(BaseModel):
     iterations_used: int = 0
     route: str | None = None
     trace: list[TraceStep] = Field(default_factory=list)
+    # Only populated for status="composition_failed" -- the evidence Person B's
+    # research actually found, so a degraded response still shows real work
+    # instead of nothing. Left as permissive dicts (not a strict Evidence
+    # model): this is Person B's ResearchState.evidence shape passed straight
+    # through, and duplicating its schema here would be one more place for the
+    # two to drift.
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
     # True when the answer came from the fixture stub rather than the real
     # pipeline. The UI shows a banner for this, so a demo can never silently
     # pass off canned output as a real research run.

@@ -1,5 +1,6 @@
 """Compose clean answers or faithfully present Person B's conflict decisions."""
 
+import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -12,6 +13,7 @@ from .synthesis import CitationClaim, OrdinarySectionResult, PartialSynthesisRes
 if TYPE_CHECKING:
     from ..agent.state import ResearchState
 
+logger = logging.getLogger(__name__)
 
 MAX_COMPOSITION_REPAIRS = 1
 
@@ -65,6 +67,7 @@ def compose_answer(
     conflict_citations = presentation.citations if presentation else []
 
     evidence_context = [{"chunk_id": item.chunk_id, "text": item.text} for item in state.evidence]
+    logger.info("Synthesizing answer from %d evidence items...", len(state.evidence))
     result_type = PartialSynthesisResult if state.unresolved_claims else SynthesisResult
     if presentation:
         result_type = OrdinarySectionResult

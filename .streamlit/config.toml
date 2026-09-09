@@ -5,9 +5,9 @@
 # and handles color only. Hex values here must stay in sync with the :root
 # custom properties in app.py's injected <style> block.
 [theme]
-base = "dark"
-primaryColor = "#c9a15a"
-backgroundColor = "#15120f"
-secondaryBackgroundColor = "#221d18"
-textColor = "#ece7dd"
+base = "light"
+primaryColor = "#c1652e"
+backgroundColor = "#f7f0e3"
+secondaryBackgroundColor = "#ece0cb"
+textColor = "#3a2e22"
 font = "sans serif"

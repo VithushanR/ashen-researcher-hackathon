@@ -1,4 +1,4 @@
-"""Genuine OpenRouter call through the coverage-validation adapter.
+"""Genuine Gemini call through the coverage-validation adapter.
 
 Every other coverage test mocks validate_coverage, so none of them can catch a
 real model deviating from the expected output shape (e.g. echoing an input
@@ -7,7 +7,7 @@ extra="forbid"). This test exercises the real prompt against the real FAST
 model with populated required_claims -- the exact path that was blind to that
 bug -- and asserts the full round trip succeeds without extra_forbidden.
 
-Skipped when no OPENROUTER_API_KEY is configured.
+Skipped when no GEMINI_API_KEY is configured.
 """
 
 import pytest

@@ -21,6 +21,8 @@ multi-hop questions without needing to guess in advance.
 IMPORT PATH NOTE: fixtures/ lives at the repo root, a sibling of src/,
 not nested inside src/agent/ — import accordingly.
 """
+import logging
+
 from agent.state import ResearchState, Evidence, TraceStep
 from agent.router import derive_route
 from agent.planner import derive_required_claims, plan_first_query, plan_next_query
@@ -29,6 +31,8 @@ from agent.sufficiency import check_sufficiency
 from agent.conflict import detect_conflicts, resolve_conflicts
 from agent.vision import describe_image
 from fixtures.fake_hybrid_search import hybrid_search as fake_hybrid_search
+
+logger = logging.getLogger(__name__)
 
 
 def research(
@@ -58,6 +62,7 @@ def research(
             )
             break
 
+        logger.info("Research iteration %d: searching for %r", state.iteration + 1, query)
         raw_chunks = search_fn(query, k=8)
         new_evidence = analyze_evidence(raw_chunks, state)
         added = len(new_evidence)
@@ -73,6 +78,11 @@ def research(
             state.conflicts = resolve_conflicts(raw_conflicts, state.evidence)
 
         verdict = check_sufficiency(state)
+        if verdict.verdict == "sufficient":
+            logger.info("Iteration %d verdict: %s", state.iteration, verdict.verdict)
+        else:
+            logger.info("Iteration %d verdict: %s (%s)",
+                        state.iteration, verdict.verdict, verdict.missing_info)
         state.trace.append(
             TraceStep(step=state.iteration, query=query, verdict=verdict.verdict, missing=verdict.missing_info)
         )

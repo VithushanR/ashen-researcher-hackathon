@@ -12,19 +12,18 @@ Kept separate from llm_client.py because it's a different call shape
 model tier. Retry/backoff still mirrors llm_client so a flaky vision
 call doesn't crash the loop.
 
-Provider: OpenRouter, per the Technical Spec's stack. The model is
-built lazily on first real call so importing this module never requires
-a key or network — same fix applied to llm_client.py, so pytest and a
-clean checkout stay side-effect-free.
+Provider: Google Gemini, via the `google-genai` package -- see
+llm_client.py's docstring for why (OpenRouter's free tier became
+unusable; the older `google-generativeai` SDK is deprecated). The
+client is built lazily on first real call so importing this module
+never requires a key or network — same fix applied to llm_client.py, so
+pytest and a clean checkout stay side-effect-free.
 """
-import base64
 import os
 import time
 from pathlib import Path
 
 from agent.models import VISION_MODEL
-
-_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 _MAX_RETRIES = 4
 _BACKOFF_SECONDS = [1, 2, 4, 8]  # exponential backoff, per spec §2.13
@@ -69,10 +68,9 @@ def _resolve_image_path(filename: str) -> Path:
     )
 
 
-def _encode_image(path: Path) -> str:
-    """Read an image file and return a base64 data string for the API."""
-    data = path.read_bytes()
-    return base64.b64encode(data).decode("utf-8")
+def _read_image_bytes(path: Path) -> bytes:
+    """Read an image file's raw bytes for the API."""
+    return path.read_bytes()
 
 
 def describe_image(filename: str, question: str) -> str:
@@ -102,36 +100,19 @@ def describe_image(filename: str, question: str) -> str:
         "State plainly what you can see. If the image does not contain "
         "anything relevant to the question, say exactly: NOTHING RELEVANT."
     )
-    b64 = _encode_image(image_path)
-
-    payload = {
-        "model": VISION_MODEL,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{b64}"},
-                    },
-                ],
-            }
-        ],
-    }
+    image_bytes = _read_image_bytes(image_path)
 
     last_error: Exception | None = None
     for attempt in range(_MAX_RETRIES):
         try:
-            import requests  # imported lazily so module import needs no deps/key
-            resp = requests.post(
-                _OPENROUTER_URL,
-                headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}"},
-                json=payload,
-                timeout=60,
+            from google import genai  # imported lazily so module import needs no deps/key
+            from google.genai import types
+            client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+            resp = client.models.generate_content(
+                model=VISION_MODEL,
+                contents=[prompt, types.Part.from_bytes(data=image_bytes, mime_type="image/png")],
             )
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"] or ""
+            return resp.text or ""
         except Exception as e:
             last_error = e
             if attempt < _MAX_RETRIES - 1:

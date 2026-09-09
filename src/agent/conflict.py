@@ -24,11 +24,14 @@ handle this as a valid terminal state (present both claims, favor
 neither) — not treat it as "still pending."
 """
 import json
+import logging
 
 from pydantic import BaseModel, ValidationError
 
 from agent.state import ClaimSource, Conflict, Evidence
 from agent.llm_client import call_llm
+
+logger = logging.getLogger(__name__)
 
 RELIABILITY_RANK = {
     "T1_authoritative": 4,
@@ -134,6 +137,8 @@ def detect_conflicts(evidence: list[Evidence]) -> list[Conflict]:
             )
         conflicts.append(Conflict(attribute=raw_conflict.attribute, claims=claim_sources))
 
+    for conflict in conflicts:
+        logger.info("Conflict detected on '%s' — resolving...", conflict.attribute)
     return conflicts
 
 
@@ -148,6 +153,8 @@ def resolve_conflicts(conflicts: list[Conflict], evidence: list[Evidence]) -> li
     resolved: list[Conflict] = []
     for conflict in conflicts:
         winner = _apply_resolution_policy(conflict, chunk_lookup)
+        logger.info("Conflict resolved: %s",
+                    winner.resolved_value if winner.resolved_value is not None else "left unresolved")
         resolved.append(winner)
     return resolved
 

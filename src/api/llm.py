@@ -13,8 +13,8 @@ STRONG_MODEL = SYNTHESIS_MODEL
 
 
 def llm_available() -> bool:
-    """Whether the OpenRouter key llm_client.call_llm() needs is actually set."""
-    return bool(os.environ.get("OPENROUTER_API_KEY"))
+    """Whether the Gemini key llm_client.call_llm() needs is actually set."""
+    return bool(os.environ.get("GEMINI_API_KEY"))
 
 
 def synthesize(prompt: str) -> object:

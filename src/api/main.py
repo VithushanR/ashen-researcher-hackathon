@@ -24,7 +24,7 @@ import os
 from collections.abc import Iterator
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -160,7 +160,7 @@ def health_detail() -> dict:
 
 
 @app.post("/ask", response_model=AskResponse)
-def ask(request: AskRequest) -> AskResponse:
+def ask(request: AskRequest, response: Response) -> AskResponse:
     """Answer a question and return the answer, citations, conflicts and trace.
 
     The non-streaming path. Simpler to test and to call from a script; the UI
@@ -180,6 +180,12 @@ def ask(request: AskRequest) -> AskResponse:
         logger.exception("Failed to answer: %s", question)
         raise HTTPException(status_code=500, detail=f"Research failed: {error}") from error
 
+    if payload.get("status") == "composition_failed":
+        # A known, expected failure mode (research succeeded, composition
+        # exhausted its retries) -- not a server bug, so 503, not 500. The
+        # body still carries the full AskResponse shape (trace, evidence,
+        # iterations_used), not just an error detail string.
+        response.status_code = 503
     return AskResponse.model_validate(payload)
 
 

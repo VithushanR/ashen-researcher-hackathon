@@ -1,6 +1,7 @@
 """Coverage gate for final answer text, separate from citation entailment."""
 
 import json
+import logging
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Literal
@@ -8,6 +9,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .synthesis import CitationClaim, OrdinarySectionResult
+
+logger = logging.getLogger(__name__)
 
 
 class CoverageVerdict(BaseModel):
@@ -274,12 +277,14 @@ not apply. Use null for an absent answer_excerpt or reason.
 INPUT DATA:
 """)
     prompt = instructions + json.dumps(payload, ensure_ascii=False)
+    logger.info("Validating answer coverage...")
     raw = validate_coverage(prompt)
     if isinstance(raw, PresentationCoverageVerdict):
         raw = raw.model_dump()
     # One strict runtime schema is authoritative for every coverage outcome.
     # Missing presentation data and echoed input fields therefore fail closed.
     verdict = PresentationCoverageVerdict.model_validate(raw)
+    logger.info("Coverage validation: %s", verdict.coverage)
     if verdict.coverage != "complete":
         raise CitationCoverageError(answer, verdict)
     expected = required_claims or [question]

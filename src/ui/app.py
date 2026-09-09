@@ -75,14 +75,15 @@ st.session_state.setdefault("result", None)
 st.session_state.setdefault("error", None)
 st.session_state.setdefault("asked", None)
 
-# Palette: strict 60/30/10. 60% a warm near-black ink canvas, 30% a warm dark
-# graphite for elevated surfaces (cards/panels/inputs), 10% a single antique-gold
-# accent reserved for the primary CTA, active states, and the one number in the
-# whole page that matters most (confidence). Every other colour on screen is a
-# tint of ink/graphite/parchment text, never a fourth hue -- that restraint is
-# what reads as premium rather than decorated. Defined once as CSS custom
-# properties; render.py's badge palettes are hand-kept in the same family since
-# that file intentionally has no Streamlit/CSS access of its own.
+# Palette: strict 60/30/10. 60% a warm cream/ivory canvas, 30% a warm taupe
+# for elevated surfaces (cards/panels/inputs), 10% a single burnished-copper
+# accent reserved for the primary CTA, active states, and the one number in
+# the whole page that matters most (confidence). Every other colour on screen
+# is a tint of the warm-brown text or taupe surface, never a fourth hue --
+# that restraint is what reads as premium rather than decorated. Defined once
+# as CSS custom properties; render.py's badge palettes are hand-kept in the
+# same warm family since that file intentionally has no Streamlit/CSS access
+# of its own.
 #
 # Hex values here are mirrored in .streamlit/config.toml for Streamlit's native
 # widgets (buttons, inputs, slider, sidebar chrome) -- keep the two in sync.
@@ -92,16 +93,16 @@ st.markdown(
       @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap');
 
       :root {
-        --ashen-bg: #15120f;            /* 60% dominant -- ink canvas */
-        --ashen-surface: #221d18;       /* 30% secondary -- elevated panel */
-        --ashen-surface-2: #2b241d;     /* nested surface, one step lighter */
-        --ashen-accent: #c9a15a;        /* 10% accent -- antique gold */
-        --ashen-accent-soft: rgba(201, 161, 90, 0.14);
-        --ashen-accent-border: rgba(201, 161, 90, 0.45);
-        --ashen-text: #ece7dd;          /* parchment white */
-        --ashen-text-muted: #a99d8c;    /* muted warm grey */
-        --ashen-text-faint: #7d7365;
-        --ashen-border: rgba(236, 231, 221, 0.10);
+        --ashen-bg: #f7f0e3;            /* 60% dominant -- warm cream/ivory canvas */
+        --ashen-surface: #ece0cb;       /* 30% secondary -- warm taupe panel */
+        --ashen-surface-2: #e3d5ba;     /* nested surface, one step deeper */
+        --ashen-accent: #c1652e;        /* 10% accent -- burnished copper/terracotta */
+        --ashen-accent-soft: rgba(193, 101, 46, 0.12);
+        --ashen-accent-border: rgba(193, 101, 46, 0.45);
+        --ashen-text: #3a2e22;          /* dark warm brown, not pure black */
+        --ashen-text-muted: #7a6a56;    /* muted warm brown-grey */
+        --ashen-text-faint: #9c8b74;
+        --ashen-border: rgba(58, 46, 34, 0.12);
         --ashen-serif: 'Fraunces', Georgia, serif;
         --ashen-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
       }
@@ -154,12 +155,12 @@ st.markdown(
       /* Primary CTA is the one place, besides confidence, the accent fills a
          surface rather than just tinting one -- its rarity is the point. */
       div[data-testid="stButton"] button[kind="primary"] {
-        background: var(--ashen-accent); border: none; color: #1a140a;
+        background: var(--ashen-accent); border: none; color: #fbf3e6;
         font-weight: 700; font-family: var(--ashen-sans); border-radius: 8px;
         padding: 0.6rem 1.8rem; letter-spacing: 0.01em;
       }
       div[data-testid="stButton"] button[kind="primary"]:hover {
-        background: #d6ae68; box-shadow: 0 4px 14px rgba(201, 161, 90, 0.25);
+        background: #a8531f; box-shadow: 0 4px 14px rgba(193, 101, 46, 0.25);
       }
       div[data-testid="stButton"] button[kind="primary"]:disabled {
         background: var(--ashen-surface-2); color: var(--ashen-text-faint);
@@ -194,7 +195,7 @@ st.markdown(
       .ashen-found { color: var(--ashen-text-muted); font-size: 0.78rem; margin-top: 0.3rem; }
       /* Not the accent colour on purpose -- accent is reserved for the CTA,
          active states, and confidence; this is a secondary trace detail. */
-      .ashen-missing { color: #ad8a63; font-size: 0.78rem; margin-top: 0.35rem;
+      .ashen-missing { color: #8a6a3f; font-size: 0.78rem; margin-top: 0.35rem;
                        font-weight: 500; }
       div[data-testid="stExpander"] summary { font-family: var(--ashen-sans); }
 
@@ -413,8 +414,49 @@ def render_citations(citations: list[dict[str, Any]]) -> None:
                     st.info(source.get("note", "Binary source — open it from the archive."))
 
 
+def render_composition_failed(payload: dict[str, Any]) -> None:
+    """Research succeeded; composition didn't. Calm, not alarming: this is a
+    known model-consistency limitation (see pipeline.py's _degraded_payload),
+    not a broken app -- so it gets its own quiet card, the real evidence
+    found, and no citation-linked prose there was never a validated answer for.
+    """
+    status_label, status_colour = status_badge(payload.get("status", ""))
+    with st.container(border=False, key="answer-card"):
+        st.markdown(
+            f'<div class="ashen-answer-meta">'
+            f'<span>{pill(status_label, status_colour)}'
+            f'<span class="ashen-meta" style="margin-left:0.8rem">'
+            f'{payload.get("iterations_used", 0)} research rounds · '
+            f'route: {payload.get("route") or "n/a"}</span></span></div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="ashen-answer" style="font-size:1.05rem">'
+            "Found relevant evidence but couldn't produce a fully verified "
+            "answer this time — please try again.</div>",
+            unsafe_allow_html=True,
+        )
+
+    evidence = payload.get("evidence", [])
+    if evidence:
+        st.markdown('<div class="ashen-eyebrow">Evidence found</div>', unsafe_allow_html=True)
+        for item in evidence:
+            location = citation_location(item)
+            text = (item.get("text") or "")[:300]
+            st.markdown(
+                f'<div class="ashen-card">'
+                f'<div class="ashen-meta">{location}</div>'
+                f'<div style="margin-top:0.3rem">{text}</div></div>',
+                unsafe_allow_html=True,
+            )
+    render_gaps(payload.get("unresolved_claims", []))
+
+
 def render_answer(payload: dict[str, Any]) -> None:
     """The final answer block: status, confidence, prose, conflicts, gaps, evidence."""
+    if payload.get("status") == "composition_failed":
+        render_composition_failed(payload)
+        return
     status_label, status_colour = status_badge(payload.get("status", ""))
     confidence = int(payload.get("confidence", 0))
     conf_label, _conf_colour = confidence_style(confidence)
@@ -508,6 +550,17 @@ question = st.text_area(
     label_visibility="collapsed",
 )
 ask_clicked = st.button("Research", type="primary", disabled=health is None)
+if health is None:
+    # A disabled button gives zero visual feedback on its own -- Streamlit
+    # renders it identically to an enabled one apart from the dimmed style,
+    # so without this a dead backend looks exactly like "the app is broken"
+    # rather than "the button is correctly refusing to fire." This used to
+    # be self-evident when the health check sat at the top of the sidebar;
+    # moving it into a collapsed "System status" expander for a cleaner look
+    # silently took this feedback away, so it's restored here, inline, where
+    # it's actually visible at the moment it matters.
+    st.caption(f"Research is disabled: no backend reachable at `{API_BASE}`. "
+               "See System status in the sidebar.")
 
 trace_area = st.container()
 

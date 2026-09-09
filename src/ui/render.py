@@ -49,6 +49,9 @@ STATUS_STYLES: dict[str, tuple[str, str]] = {
     "complete": ("Complete", "#7fa06a"),
     "complete_with_conflict": ("Conflict resolved", "#c9a15a"),
     "partial_gap_stated": ("Partial — gap stated", "#b06b5c"),
+    # Research succeeded; composition didn't. Neutral, not alarmed -- this is
+    # a known model-consistency limitation, not a red "error" state.
+    "composition_failed": ("Answer unavailable", "#8a8377"),
 }
 
 VERDICT_STYLES: dict[str, tuple[str, str]] = {

@@ -285,103 +285,137 @@ def _compose_with_adapters(compose: Callable, state: Any) -> Any:
     )
 
 
-# _validate_requirement_mappings (src/answer/coverage_validation.py) binds a
-# citation claim's text to the synthesized answer and to the coverage model's
-# own quoted excerpt with an exact, only-whitespace-normalised match. All three
-# strings come from separate LLM generations, so this fails periodically on
-# ordinary sampling variance (confirmed empirically: 1 failure in 3 identical
-# real-pipeline runs of the same question, with no code change between them),
-# not because the answer was wrong. Retrying just the compose step -- not
-# Person B's research() -- costs one extra synthesis+coverage call, not a
-# repeat of the whole retrieval loop, and it matched on the very next attempt
-# in that reproduction. The message is matched verbatim rather than a new
-# exception subclass so this stays pure API-layer retry orchestration and
-# leaves coverage_validation.py's matching strictness untouched.
-_COVERAGE_MAPPING_MISMATCH = "Mapped atomic claim must appear in ordinary answer and excerpt"
+# Both retries below share one problem: a strict structured-output validator
+# (src/answer/coverage_validation.py, src/agent/sufficiency.py) occasionally
+# rejects a real model response because ONE of that response's own JSON fields
+# doesn't logically cohere with another -- a mapped claim missing from the
+# answer text, a verdict field that doesn't match what the model's own
+# per-requirement statuses imply, a status of "omitted" carrying an excerpt
+# that only "answered" is allowed to carry. Confirmed as sampling variance,
+# not a code bug, three separate times now, across two different model
+# providers, each with its own distinct exact message -- an exhaustive
+# property test (tests/test_agent_sufficiency.py::test_complete_consistency_
+# matrix) and a targeted regression test (test_model_cannot_override_
+# unresolved_conflict) both confirm the checks themselves are correct and
+# deliberate, so the fix belongs in retry orchestration, not in loosening
+# either validator. Matching on the exact message was already a whack-a-mole
+# list after the second one; _originates_in scopes the retry to WHERE an
+# error came from instead, so a fourth or fifth phrasing of the same kind of
+# contradiction is covered without another string added here by hand.
+def _originates_in(error: BaseException, *module_names: str) -> bool:
+    """True if any frame in error's traceback belongs to one of these modules.
+
+    Confirmed empirically (not assumed) that this still works when the error
+    is a pydantic ValidationError raised from inside a @model_validator: the
+    validator's own raise happens inside pydantic-core, written in Rust, and
+    does NOT appear in the traceback -- but the frame for the actual call
+    that triggered validation (e.g. PresentationCoverageVerdict.model_validate
+    (...), inside coverage_validation.py) does, because that call is a normal
+    Python frame in the chain from raise to catch. ValidationError is itself
+    a ValueError subclass (confirmed: issubclass(pydantic.ValidationError,
+    ValueError) is True), so callers here only need to catch ValueError.
+    """
+    tb = error.__traceback__
+    while tb is not None:
+        if tb.tb_frame.f_globals.get("__name__") in module_names:
+            return True
+        tb = tb.tb_next
+    return False
+
+
+class ComposeExhausted(RuntimeError):
+    """All _MAX_COMPOSE_ATTEMPTS attempts hit the same self-consistency family.
+
+    Distinct from a bare re-raise so the caller (_real_answer) can tell "the
+    known, expected retry-exhaustion case" apart from any other exception
+    _compose_with_retry lets through unretried (a real bug, CitationCoverage
+    Error, a transport error) -- only this one gets degraded into a graceful
+    research-only response instead of a raw 500. ``original`` is kept for
+    logging; chaining with `from error` keeps the real traceback visible too.
+    """
+
+    def __init__(self, original: Exception):
+        self.original = original
+        super().__init__(str(original))
+
+
 _MAX_COMPOSE_ATTEMPTS = 3
 
 
 def _compose_with_retry(compose: Callable, state: Any, question: str) -> Any:
-    """Retry only the exact coverage-mapping mismatch, up to 3 attempts total.
+    """Retry a self-consistency failure from coverage_validation.py, up to 3 attempts.
 
-    Any other exception -- a real bug, a 429/quota error, a different
-    ValueError -- propagates on the first attempt. Retrying those would burn
-    quota for no benefit and could mask a genuine failure.
+    CitationCoverageError/PresentationCompletenessError are deliberately NOT
+    included even though they also originate there: those mean the verdict
+    itself says the answer is genuinely incomplete, not that the verdict's
+    own fields contradict each other, and composer.py already gives that
+    case its own smarter repair-with-feedback attempt (MAX_COMPOSITION_
+    REPAIRS) before ever re-raising here. Blindly retrying past that would
+    blur a deliberate, already-handled distinction rather than fix variance.
+
+    Any other exception -- those two types, a real bug in composer.py's own
+    checks, a 429/quota error, anything not from coverage_validation.py at
+    all -- propagates on the first attempt. Retrying those would burn quota
+    for no benefit and could mask a genuine failure.
     """
+    from src.answer.coverage_validation import CitationCoverageError
+
     for attempt in range(1, _MAX_COMPOSE_ATTEMPTS + 1):
         try:
             result = _compose_with_adapters(compose, state)
         except ValueError as error:
-            if str(error) != _COVERAGE_MAPPING_MISMATCH:
+            if isinstance(error, CitationCoverageError) or not _originates_in(
+                error, "src.answer.coverage_validation"
+            ):
                 raise
             if attempt == _MAX_COMPOSE_ATTEMPTS:
                 logger.error(
-                    "Coverage mapping mismatch: attempt %d/%d failed (final) for %r",
-                    attempt, _MAX_COMPOSE_ATTEMPTS, question,
+                    "Retry attempt %d/%d exhausted after: %s", attempt, _MAX_COMPOSE_ATTEMPTS, error,
                 )
-                raise
+                raise ComposeExhausted(error) from error
             logger.warning(
-                "Coverage mapping mismatch: attempt %d/%d failed, retrying for %r: %s",
-                attempt, _MAX_COMPOSE_ATTEMPTS, question, error,
+                "Retry attempt %d/%d after: %s", attempt, _MAX_COMPOSE_ATTEMPTS, error,
             )
             continue
         logger.info(
-            "Coverage mapping mismatch: attempt %d/%d passed for %r",
+            "Coverage self-consistency check: attempt %d/%d passed for %r",
             attempt, _MAX_COMPOSE_ATTEMPTS, question,
         )
         return result
 
 
-# _validate_consistency (src/agent/sufficiency.py) rejects a sufficiency
-# verdict whose top-level fields (coverage/agreement/verdict) don't match a
-# deterministic formula derived from the model's own per-requirement
-# assessments and B's existing conflict state -- all read from ONE structured
-# JSON response the fast/cheap-tier model produces in a single call. An
-# exhaustive property test (tests/test_agent_sufficiency.py
-# ::test_complete_consistency_matrix) confirms the check itself is correct and
-# deliberate, not an oversight -- a spot-check attempt to loosen it broke that
-# test and tests/test_agent_sufficiency.py::test_model_cannot_override_
-# unresolved_conflict, which exists specifically to catch a model that hides a
-# real unresolved conflict by claiming a requirement is cleanly supported.
-# So this is the same character of failure as the coverage-mapping mismatch
-# above -- one call's structured output failing to satisfy its own internal
-# consistency contract -- not a deterministic code bug, and the fix belongs
-# here too, not in loosening agent/sufficiency.py.
-#
 # Unlike the compose retry, a retry here re-runs Person B's ENTIRE research()
 # loop from scratch (up to max_iter rounds, each with several LLM calls), not
 # one cheap call -- so this stays capped at one retry (2 attempts total), not
 # 3, to bound the extra quota cost of a mistake this expensive to redo.
-_SUFFICIENCY_CONTRADICTION = "Verdict contradicts requirement assessments or unresolved B conflict"
 _MAX_RESEARCH_ATTEMPTS = 2
 
 
 def _research_with_retry(research: Callable, question: str) -> Any:
-    """Retry only the exact sufficiency self-consistency mismatch, up to 2 attempts.
+    """Retry a self-consistency failure from agent/sufficiency.py, up to 2 attempts.
 
-    Any other exception -- a real bug, a 429/quota error, a different
-    ValueError -- propagates on the first attempt, exactly as in
+    Any other exception -- a real bug, a 429/quota error, anything not from
+    sufficiency.py at all (a malformed-output error from conflict.py's
+    detector, say) -- propagates on the first attempt, exactly as in
     _compose_with_retry: retrying those would burn quota for no benefit.
     """
     for attempt in range(1, _MAX_RESEARCH_ATTEMPTS + 1):
         try:
             state = research(question, search_fn=hybrid_search)
         except ValueError as error:
-            if str(error) != _SUFFICIENCY_CONTRADICTION:
+            if not _originates_in(error, "agent.sufficiency"):
                 raise
             if attempt == _MAX_RESEARCH_ATTEMPTS:
                 logger.error(
-                    "Sufficiency contradiction: attempt %d/%d failed (final) for %r",
-                    attempt, _MAX_RESEARCH_ATTEMPTS, question,
+                    "Retry attempt %d/%d exhausted after: %s", attempt, _MAX_RESEARCH_ATTEMPTS, error,
                 )
                 raise
             logger.warning(
-                "Sufficiency contradiction: attempt %d/%d failed, retrying for %r: %s",
-                attempt, _MAX_RESEARCH_ATTEMPTS, question, error,
+                "Retry attempt %d/%d after: %s", attempt, _MAX_RESEARCH_ATTEMPTS, error,
             )
             continue
         logger.info(
-            "Sufficiency contradiction: attempt %d/%d passed for %r",
+            "Sufficiency self-consistency check: attempt %d/%d passed for %r",
             attempt, _MAX_RESEARCH_ATTEMPTS, question,
         )
         return state
@@ -414,6 +448,41 @@ def _to_payload(state: Any, composed: Any, question: str) -> dict[str, Any]:
     return payload
 
 
+_COMPOSITION_FAILED_MESSAGE = (
+    "Research completed successfully, but the answer composer could not "
+    "produce a fully validated response after 3 attempts. This is a known "
+    "model-consistency limitation, not a system failure."
+)
+
+
+def _degraded_payload(state: Any, question: str, error: Exception) -> dict[str, Any]:
+    """Research succeeded even though composition never did -- surface that
+    honestly (trace, evidence, iterations, route all still attached) instead
+    of discarding real work behind a bare 500. status="composition_failed" is
+    intentionally distinct from the three real ComposedAnswer statuses so the
+    UI (src/ui/render.py's status_badge, src/ui/app.py's render_answer) can
+    render it calmly rather than as either a normal answer or a raw error.
+    """
+    logger.warning(
+        "Composition exhausted all retries for %r; returning a degraded "
+        "research-only response instead of a 500: %s", question, error,
+    )
+    return {
+        "question": question,
+        "answer": _COMPOSITION_FAILED_MESSAGE,
+        "status": "composition_failed",
+        "confidence": _field(state, "confidence", 0),
+        "citations": [],
+        "conflicts": [],
+        "unresolved_claims": list(_field(state, "unresolved_claims", [])),
+        "iterations_used": _field(state, "iteration", 0),
+        "route": _field(state, "route", None),
+        "trace": [_as_dict(step) for step in _field(state, "trace", [])],
+        "evidence": [_as_dict(item) for item in _field(state, "evidence", [])],
+        "is_stub": False,
+    }
+
+
 def _real_answer(
     question: str,
     research: Callable,
@@ -421,6 +490,7 @@ def _real_answer(
     on_step: Callable[[Any], None] | None = None,
 ) -> dict[str, Any]:
     """Run the real pipeline: Person B's loop, then Person C's composer."""
+    started = time.monotonic()
     if on_step is not None and _supports_callback(research):
         # A retry here would need to somehow un-emit or relabel the steps
         # already streamed to the UI for the discarded attempt -- a real UX
@@ -430,7 +500,26 @@ def _real_answer(
         state = research(question, search_fn=hybrid_search, on_step=on_step)
     else:
         state = _research_with_retry(research, question)
-    return _to_payload(state, _compose_with_retry(compose, state, question), question)
+    try:
+        composed = _compose_with_retry(compose, state, question)
+    except ComposeExhausted as exhausted:
+        # Only the specific, known, already-retried exhaustion case degrades
+        # gracefully. Anything else _compose_with_retry lets through --
+        # CitationCoverageError, a real bug, a transport error -- still
+        # propagates unchanged and still becomes a real 500: those are not
+        # "a known model-consistency limitation," and claiming they are would
+        # be its own dishonesty.
+        return _degraded_payload(state, question, exhausted.original)
+    payload = _to_payload(state, composed, question)
+    # The one shared choke point for every real-pipeline response -- the
+    # non-streaming /ask path and both streaming workers below all call this
+    # function, so logging here covers all three without duplicating it.
+    logger.info(
+        "Answer ready: status=%s, confidence=%s, iterations=%s, took %.1fs",
+        payload.get("status"), payload.get("confidence"),
+        payload.get("iterations_used"), time.monotonic() - started,
+    )
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -439,6 +528,7 @@ def _real_answer(
 
 def answer_question(question: str, *, baseline: bool = False) -> dict[str, Any]:
     """Answer one question. The non-streaming path behind ``POST /ask``."""
+    logger.info("Received question: %r", question)
     if baseline:
         return _baseline_answer(question)
 
@@ -516,6 +606,7 @@ def stream_question(question: str, *, baseline: bool = False) -> Iterator[dict[s
     Always terminates with exactly one ``answer`` or one ``error``, so the UI
     never waits on a stream that has quietly stopped producing.
     """
+    logger.info("Received question: %r", question)
     yield {"event": "start", "question": question}
 
     mode = _mode()
